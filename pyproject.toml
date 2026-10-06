@@ -2,6 +2,7 @@
 name = "thesis-tools"
 version = "0.1.0"
 description = "mini-swe-agent 2.4.6 model classes and named tools for a thesis on agent tool surfaces"
+license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
     "mini-swe-agent==2.4.6",
