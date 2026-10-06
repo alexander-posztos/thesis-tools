@@ -1,0 +1,13 @@
+[project]
+name = "thesis-tools"
+version = "0.1.0"
+description = "mini-swe-agent 2.4.6 model classes and named tools for a thesis on agent tool surfaces"
+requires-python = ">=3.10"
+dependencies = [
+    "mini-swe-agent==2.4.6",
+    "ripgrep-bin==15.2.0; sys_platform == 'linux'",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

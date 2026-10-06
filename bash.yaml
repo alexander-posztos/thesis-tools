@@ -1,0 +1,11 @@
+# config for the baseline (bash only). Pier loads it on top of mini.yaml with
+#   --ak config_file=bash.yaml --ak model_class=thesis_tools.model.BashModel
+# the only change is the retry block, since Aqueduct allows 25 requests/min per key and
+# mini doesn't retry RateLimitError on its own.
+#
+# model_class can't be set in yaml. Pier appends its own -c model.model_class after this file,
+# and for openai/ models that defaults to litellm_response, so the CLI flag is the only way to win.
+model:
+  model_kwargs:
+    num_retries: 15
+    retry_strategy: exponential_backoff_retry
