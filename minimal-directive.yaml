@@ -1,0 +1,35 @@
+# config for the tools condition with a tool_directive set. Same as minimal.yaml
+# except model.tool_directive, which goes in front of the search tool's description. The agent block must
+# stay byte-identical to minimal.yaml (tests/test_model.py checks that), the prompt is the control.
+#
+# why: with minimal.yaml GLM never picked the search tool (free choice, named grep then), and every production agent that ships a
+# search tool next to a shell tool steers with an explicit sentence (Claude Code, Codex, Gemini CLI,
+# OpenCode). Wording follows the OpenAI Codex guide: one directive, in the tool, naming the shell habit.
+model:
+  tool_directive: Use this tool for every content search instead of running grep or rg through bash.
+  model_kwargs:
+    num_retries: 15
+    retry_strategy: exponential_backoff_retry
+  format_error_template: |
+    {% if finish_reason is defined and (finish_reason == "length" or (finish_reason == "tool_calls" and not has_tool_calls)) -%}
+    Your previous response reached the output token limit (finish_reason={{ finish_reason }}) before you produced a tool call, so it was cut off. Respond more concisely and finish with a tool call.
+    {%- else -%}
+    Tool call error:
+
+    <error>
+    {{error}}
+    </error>
+
+    Every response must contain at least one tool call. To finish, run `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` as the only bash command in that call.
+    {%- endif %}
+agent:
+  instance_template: |
+    Please solve this issue: {{task}}
+
+    Use your tools to inspect the repository and implement the fix. Every call runs in a fresh subshell, so directory changes and environment variables do not persist between calls.
+
+    When you are done, run `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` as the only bash command in that call. You cannot continue after it.
+
+    <system_information>
+    {{system}} {{release}} {{version}} {{machine}}
+    </system_information>

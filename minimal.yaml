@@ -1,0 +1,35 @@
+# config for the minimal-prompt run, the same file is used for both model classes. Pier loads it on top of mini.yaml with
+#   --ak config_file=minimal.yaml --ak model_class=thesis_tools.model.<BashModel|ToolsModel>
+#
+# mini-swe-agent's default instance_template is 3 KB of bash examples and formatting rules from before native tool calling.
+# we replace it with a short one that names no tool, the tools are only described by their schemas.
+#
+# model_kwargs is the retry block from bash.yaml. format_error_template is the one from tools.yaml without
+# the bash specific text.
+model:
+  model_kwargs:
+    num_retries: 15
+    retry_strategy: exponential_backoff_retry
+  format_error_template: |
+    {% if finish_reason is defined and (finish_reason == "length" or (finish_reason == "tool_calls" and not has_tool_calls)) -%}
+    Your previous response reached the output token limit (finish_reason={{ finish_reason }}) before you produced a tool call, so it was cut off. Respond more concisely and finish with a tool call.
+    {%- else -%}
+    Tool call error:
+
+    <error>
+    {{error}}
+    </error>
+
+    Every response must contain at least one tool call. To finish, run `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` as the only bash command in that call.
+    {%- endif %}
+agent:
+  instance_template: |
+    Please solve this issue: {{task}}
+
+    Use your tools to inspect the repository and implement the fix. Every call runs in a fresh subshell, so directory changes and environment variables do not persist between calls.
+
+    When you are done, run `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` as the only bash command in that call. You cannot continue after it.
+
+    <system_information>
+    {{system}} {{release}} {{version}} {{machine}}
+    </system_information>

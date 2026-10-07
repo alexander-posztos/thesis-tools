@@ -20,7 +20,7 @@ RG = Path(sys.executable).parent / "rg"
 SEARCH_TOOL = {
     "type": "function",
     "function": {
-        "name": "grep",
+        "name": "search",
         "description": (
             "Search file contents for a pattern. Returns matching lines with file paths and line numbers. "
             f"Respects .gitignore. Output is truncated to {DEFAULT_LIMIT} matches or "
@@ -191,7 +191,7 @@ def validate(raw_args):
             errors.append(f"  - /{key}: Expected {props[key]['type']}")
     if errors:
         raise SearchError(
-            'Validation failed for tool "grep":\n' + "\n".join(errors)
+            'Validation failed for tool "search":\n' + "\n".join(errors)
             + f"\n\nReceived arguments:\n{json.dumps(args, indent=2)}"
         )
     # unknown keys are ignored, like in pi

@@ -7,18 +7,23 @@ Named tools for [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) 2.
 ```
 thesis_tools/search.py   the search tool and its CLI (python -m thesis_tools.search '<json args>')
 thesis_tools/model.py    BashModel and ToolsModel
-bash.yaml, tools.yaml    mini-swe-agent config 
+bash.yaml, tools.yaml    mini-swe-agent config, default prompt plus a one-line search-tool mention
+minimal*.yaml            shared minimal prompt, the directive variant steers via the tool description
 tests/                   pytest
 ```
 
 ## Usage
 
-The package is installed into the task image along mini-swe-agent, and the tool surface is selected through mini-swe-agent's `model_class` and config file. With Pier (DeepSWE runner):
+The package is installed into the task image alongside mini-swe-agent, and the tool surface is selected through mini-swe-agent's `model_class` and config file. With Pier (DeepSWE runner):
 
 ```
---ak extra_python_packages=git+https://github.com/alexander-posztos/thesis-tools.git
+--ak 'extra_python_packages=["git+https://github.com/alexander-posztos/thesis-tools.git"]'
 --ak config_file=tools.yaml --ak model_class=thesis_tools.model.ToolsModel
 ```
 
 Use `bash.yaml` and `BashModel` for the baseline.
+
+`minimal.yaml` replaces mini-swe-agent's default template with a shorter one that doesn't name tools. It works with both model classes.
+
+`minimal-directive.yaml` is the same file plus `tool_directive`, a sentence that is put in front of the search tool description.
 
