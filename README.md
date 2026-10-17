@@ -8,7 +8,8 @@ Named tools for [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) 2.
 thesis_tools/search.py   the search tool and its CLI (python -m thesis_tools.search '<json args>')
 thesis_tools/model.py    BashModel and ToolsModel
 bash.yaml, tools.yaml    mini-swe-agent config, default prompt plus a one-line search-tool mention
-minimal*.yaml            shared minimal prompt, the directive variant steers via the tool description
+minimal*.yaml            shared minimal prompt, the directive variant steers via the tool description,
+                         the reason variant asks for a stated reason in every tool call
 tests/                   pytest
 ```
 
@@ -26,4 +27,6 @@ Use `bash.yaml` and `BashModel` for the baseline.
 `minimal.yaml` replaces mini-swe-agent's default template with a shorter one that doesn't name tools. It works with both model classes.
 
 `minimal-directive.yaml` is the same file plus `tool_directive`, a sentence that is put in front of the search tool description.
+
+`minimal-reason.yaml` is the same file plus `reason_prompt`. When set, every tool (bash in `BashModel`, bash and search in `ToolsModel`) gets a required `reason` string as its first parameter, described by that sentence. The model states why it picked the tool before it writes the arguments. The reason stays in the trajectory with the tool call arguments and is never passed to the container.
 

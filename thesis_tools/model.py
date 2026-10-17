@@ -6,6 +6,11 @@ ToolsModel is the extension, currently only the search tool. We added tool_direc
 able to edit the tool description without having to change the code. We can edit the yaml file directly on the VM,
 but to edit search.py we would have to commit and push every time, since Pier installs the package from GitHub.
 
+reason_prompt (both classes) adds a required `reason` string as the first parameter of every tool, so the model
+explains why it chose the tool before it writes the arguments. The reason is stored along with the tool call
+arguments in the trajectory for later analysis.
+To not pollute or change the agent performance, we drop the reason string before it reaches the agent
+
 Pier selects one with --ak model_class=thesis_tools.model.<class>. Both abort the trial on a context overflow.
 """
 
@@ -20,6 +25,24 @@ from minisweagent.models.utils.actions_toolcall import BASH_TOOL, parse_toolcall
 from thesis_tools.search import SEARCH_TOOL
 
 
+class BashModelConfig(LitellmModelConfig):
+    reason_prompt: str = ""
+    """Description of a required `reason` parameter put first in every tool's schema. Empty means no parameter."""
+
+
+def add_reason(tool, prompt):
+    """Returns a copy of a tool schema with `reason` as its first, required parameter. Properties keep their order
+    in the JSON schema, and models fill the arguments in that order, so the reason comes before the action.
+    The original dict is untouched (BASH_TOOL and SEARCH_TOOL are module constants)."""
+    if not prompt:
+        return tool
+    tool = copy.deepcopy(tool)
+    params = tool["function"]["parameters"]
+    params["properties"] = {"reason": {"type": "string", "description": prompt.strip()}} | params["properties"]
+    params["required"] = ["reason"] + [k for k in params.get("required", []) if k != "reason"]
+    return tool
+
+
 class BashModel(LitellmModel):
     """Baseline. A copy of mini-swe-agent's LitellmModel with two changes.
 
@@ -29,7 +52,13 @@ class BashModel(LitellmModel):
        Re-raising it as ContextWindowExceededError makes mini abort right away.
     """
 
-    tools = (BASH_TOOL,)
+    def __init__(self, *, config_class=BashModelConfig, **kwargs):
+        super().__init__(config_class=config_class, **kwargs)
+        self.tools = tuple(add_reason(tool, self.config.reason_prompt) for tool in self._tools())
+
+    def _tools(self):
+        """The tool surface of this condition, before the reason parameter is added. Subclasses override."""
+        return [BASH_TOOL]
 
     def _query(self, messages, **kwargs):
         try:
@@ -47,7 +76,7 @@ class BashModel(LitellmModel):
             raise
 
 
-class ToolsModelConfig(LitellmModelConfig):
+class ToolsModelConfig(BashModelConfig):
     tool_directive: str = ""
     """Sentence put in front of the search tool description. Empty means nothing is prepended."""
 
@@ -58,13 +87,15 @@ class ToolsModel(BashModel):
 
     def __init__(self, **kwargs):
         super().__init__(config_class=ToolsModelConfig, **kwargs)
+
+    def _tools(self):
         search_tool = SEARCH_TOOL
         if self.config.tool_directive:
             search_tool = copy.deepcopy(SEARCH_TOOL)
             search_tool["function"]["description"] = (
                 self.config.tool_directive.strip() + " " + search_tool["function"]["description"]
             )
-        self.tools = (BASH_TOOL, search_tool)
+        return [BASH_TOOL, search_tool]
 
     def _parse_actions(self, response):
         tool_calls = response.choices[0].message.tool_calls or []

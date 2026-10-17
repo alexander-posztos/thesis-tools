@@ -1,0 +1,37 @@
+# config for the reactivity pilot: minimal.yaml plus model.reason_prompt, which puts a required `reason`
+# parameter first in every tool (bash in BashModel, bash and search in ToolsModel). The agent block and
+# format_error_template must stay byte-identical to minimal.yaml (tests/test_model.py checks that), so the
+# reason parameter is the only difference to the arm without it.
+#
+# why: stated reasons are the raw material for the tool-choice categorisation, but asking for an explanation can
+# itself change the choice (Fox, Ericsson & Best 2011). Run the same tasks with minimal.yaml and this file first,
+# and compare search-tool share and resolve rate, before the parameter goes into every arm.
+# wording is deliberately neutral: it names no tool and gives no preference, unlike tool_directive.
+model:
+  reason_prompt: One sentence on why you chose this tool for this step.
+  model_kwargs:
+    num_retries: 15
+    retry_strategy: exponential_backoff_retry
+  format_error_template: |
+    {% if finish_reason is defined and (finish_reason == "length" or (finish_reason == "tool_calls" and not has_tool_calls)) -%}
+    Your previous response reached the output token limit (finish_reason={{ finish_reason }}) before you produced a tool call, so it was cut off. Respond more concisely and finish with a tool call.
+    {%- else -%}
+    Tool call error:
+
+    <error>
+    {{error}}
+    </error>
+
+    Every response must contain at least one tool call. To finish, run `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` as the only bash command in that call.
+    {%- endif %}
+agent:
+  instance_template: |
+    Please solve this issue: {{task}}
+
+    Use your tools to inspect the repository and implement the fix. Every call runs in a fresh subshell, so directory changes and environment variables do not persist between calls.
+
+    When you are done, run `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` as the only bash command in that call. You cannot continue after it.
+
+    <system_information>
+    {{system}} {{release}} {{version}} {{machine}}
+    </system_information>

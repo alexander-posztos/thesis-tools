@@ -2,6 +2,8 @@ from pathlib import Path
 
 import yaml
 
+from minisweagent.models.utils.actions_toolcall import BASH_TOOL
+
 from thesis_tools.model import BashModel, ToolsModel
 from thesis_tools.search import SEARCH_TOOL
 
@@ -28,9 +30,27 @@ def test_tool_directive():
     )  # the module constant is untouched
 
 
+def test_reason_prompt():
+    # without the prompt the schemas are the module constants, nothing is added
+    assert BashModel(model_name="x").tools == (BASH_TOOL,)
+    assert ToolsModel(model_name="x").tools[1] is SEARCH_TOOL
+
+    for tool in ToolsModel(model_name="x", reason_prompt=" Why? ").tools:
+        params = tool["function"]["parameters"]
+        assert list(params["properties"])[0] == "reason"  # first, so the model writes it before the action
+        assert params["properties"]["reason"] == {"type": "string", "description": "Why?"}
+        assert params["required"][0] == "reason"
+    bash = BashModel(model_name="x", reason_prompt="Why?").tools[0]["function"]["parameters"]
+    assert bash["required"] == ["reason", "command"]
+    # the module constants are untouched
+    assert "reason" not in BASH_TOOL["function"]["parameters"]["properties"]
+    assert "reason" not in SEARCH_TOOL["function"]["parameters"]["properties"]
+
+
 def test_minimal_yamls_share_the_prompt():
-    a = yaml.safe_load((ROOT / "minimal.yaml").read_text())
-    b = yaml.safe_load((ROOT / "minimal-directive.yaml").read_text())
-    assert a["agent"] == b["agent"]
-    assert a["model"]["format_error_template"] == b["model"]["format_error_template"]
-    assert b["model"]["tool_directive"]
+    base = yaml.safe_load((ROOT / "minimal.yaml").read_text())
+    for name, key in [("minimal-directive.yaml", "tool_directive"), ("minimal-reason.yaml", "reason_prompt")]:
+        other = yaml.safe_load((ROOT / name).read_text())
+        assert other["agent"] == base["agent"]
+        assert other["model"]["format_error_template"] == base["model"]["format_error_template"]
+        assert other["model"][key]

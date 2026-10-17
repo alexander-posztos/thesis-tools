@@ -46,6 +46,7 @@ def test_caps(tmp_path):
 
 def test_validate():
     assert validate('{"pattern": "x", "extra": 1}') == {"pattern": "x"}
+    assert validate('{"reason": "because", "pattern": "x"}') == {"pattern": "x"}  # reason_prompt's key never reaches search()
     for raw, message in [
         ('{"limit": 5}', "Expected required property"),
         ('{"pattern": "x", "limit": "5"}', "Expected number"),
