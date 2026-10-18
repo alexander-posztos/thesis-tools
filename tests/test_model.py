@@ -37,25 +37,34 @@ def test_reason_prompt():
 
     for tool in ToolsModel(model_name="x", reason_prompt=" Why? ").tools:
         params = tool["function"]["parameters"]
-        assert list(params["properties"])[0] == "reason"  # first, so the model writes it before the action
-        assert params["properties"]["reason"] == {"type": "string", "description": "Why?"}
-        assert params["required"][0] == "reason"
+        assert list(params["properties"])[0] == "why_this_tool"  # first, so the model writes it before the action
+        assert params["properties"]["why_this_tool"] == {"type": "string", "description": "Why?"}
+        assert params["required"][0] == "why_this_tool"
     bash = BashModel(model_name="x", reason_prompt="Why?").tools[0]["function"]["parameters"]
-    assert bash["required"] == ["reason", "command"]
+    assert bash["required"] == ["why_this_tool", "command"]
     # a single-tool surface asks the single-tool question, a multi-tool surface the comparison
     kw = dict(model_name="x", reason_prompt="Over others?", reason_prompt_single="Alone?")
-    assert BashModel(**kw).tools[0]["function"]["parameters"]["properties"]["reason"]["description"] == "Alone?"
+    assert BashModel(**kw).tools[0]["function"]["parameters"]["properties"]["why_this_tool"]["description"] == "Alone?"
     for tool in ToolsModel(**kw).tools:
-        assert tool["function"]["parameters"]["properties"]["reason"]["description"] == "Over others?"
+        assert tool["function"]["parameters"]["properties"]["why_this_tool"]["description"] == "Over others?"
     # the module constants are untouched
-    assert "reason" not in BASH_TOOL["function"]["parameters"]["properties"]
-    assert "reason" not in SEARCH_TOOL["function"]["parameters"]["properties"]
+    assert "why_this_tool" not in BASH_TOOL["function"]["parameters"]["properties"]
+    assert "why_this_tool" not in SEARCH_TOOL["function"]["parameters"]["properties"]
 
 
 def test_minimal_yamls_share_the_prompt():
     base = yaml.safe_load((ROOT / "minimal.yaml").read_text())
     for name, key in [("minimal-directive.yaml", "tool_directive"), ("minimal-reason.yaml", "reason_prompt")]:
         other = yaml.safe_load((ROOT / name).read_text())
-        assert other["agent"] == base["agent"]
+        if key == "reason_prompt":  # the reason arm adds exactly one paragraph about the field, nothing else
+            lines = other["agent"]["instance_template"].splitlines()
+            extra = [l for l in lines if "why_this_tool" in l]
+            assert len(extra) == 1
+            kept = "\n".join(l for l in lines if l not in extra).replace("\n\n\n", "\n\n") + "\n"
+            assert kept == base["agent"]["instance_template"]
+            assert {k: v for k, v in other["agent"].items() if k != "instance_template"} == {
+                k: v for k, v in base["agent"].items() if k != "instance_template"}
+        else:
+            assert other["agent"] == base["agent"]
         assert other["model"]["format_error_template"] == base["model"]["format_error_template"]
         assert other["model"][key]

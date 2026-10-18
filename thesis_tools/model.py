@@ -6,10 +6,11 @@ ToolsModel is the extension, currently only the search tool. We added tool_direc
 able to edit the tool description without having to change the code. We can edit the yaml file directly on the VM,
 but to edit search.py we would have to commit and push every time, since Pier installs the package from GitHub.
 
-reason_prompt (both classes) adds a required `reason` string as the first parameter of every tool, so the model
-explains why it chose the tool before it writes the arguments. It asks for a comparison with the other tools, so
-a surface with a single tool uses reason_prompt_single instead (no other tool to compare with). The reason is stored
-along with the tool call arguments in the trajectory for later analysis.
+reason_prompt (both classes) adds a required `why_this_tool` string as the first parameter of every tool, so the
+model explains why it chose the tool before it writes the arguments. It asks for a comparison with the other tools,
+so a surface with a single tool uses reason_prompt_single instead (no other tool to compare with). The field is
+stored along with the tool call arguments in the trajectory for later analysis. It was called `reason` until
+18 Oct 2026; with that name the models wrote step labels ("Find X definition") whatever the description said.
 To not pollute or change the agent performance, we drop the reason string before it reaches the agent
 
 Pier selects one with --ak model_class=thesis_tools.model.<class>. Both abort the trial on a context overflow.
@@ -28,21 +29,24 @@ from thesis_tools.search import SEARCH_TOOL
 
 class BashModelConfig(LitellmModelConfig):
     reason_prompt: str = ""
-    """Description of a required `reason` parameter put first in every tool's schema. Empty means no parameter."""
+    """Description of a required `why_this_tool` parameter put first in every tool's schema. Empty means no parameter."""
     reason_prompt_single: str = ""
     """Used instead of reason_prompt when the surface has only one tool. Empty falls back to reason_prompt."""
 
 
+REASON_FIELD = "why_this_tool"
+
+
 def add_reason(tool, prompt):
-    """Returns a copy of a tool schema with `reason` as its first, required parameter. Properties keep their order
-    in the JSON schema, and models fill the arguments in that order, so the reason comes before the action.
+    """Returns a copy of a tool schema with REASON_FIELD as its first, required parameter. Properties keep their
+    order in the JSON schema, and models fill the arguments in that order, so the reason comes before the action.
     The original dict is untouched (BASH_TOOL and SEARCH_TOOL are module constants)."""
     if not prompt:
         return tool
     tool = copy.deepcopy(tool)
     params = tool["function"]["parameters"]
-    params["properties"] = {"reason": {"type": "string", "description": prompt.strip()}} | params["properties"]
-    params["required"] = ["reason"] + [k for k in params.get("required", []) if k != "reason"]
+    params["properties"] = {REASON_FIELD: {"type": "string", "description": prompt.strip()}} | params["properties"]
+    params["required"] = [REASON_FIELD] + [k for k in params.get("required", []) if k != REASON_FIELD]
     return tool
 
 

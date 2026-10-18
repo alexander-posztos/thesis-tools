@@ -194,7 +194,7 @@ def validate(raw_args):
             'Validation failed for tool "search":\n' + "\n".join(errors)
             + f"\n\nReceived arguments:\n{json.dumps(args, indent=2)}"
         )
-    # unknown keys are ignored, like in pi. this also drops the `reason` key that ToolsModel adds with reason_prompt
+    # unknown keys are ignored, like in pi. this also drops the `why_this_tool` key that ToolsModel adds with reason_prompt
     return {key: value for key, value in args.items() if key in props}
 
 
