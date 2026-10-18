@@ -12,9 +12,11 @@
 # produced step labels like "Find ResolveContext definition"; not one of 3,000+ reasons compared tools. A parameter
 # description alone is too weak, so the field is now named why_this_tool, the description asks for one sentence
 # per tool (chosen and not chosen), and the instance_template repeats the instruction. Still names no tool.
+# The third pilot copied the first skeleton ("search: why not.") verbatim, hence the <reason> placeholders. A call
+# that leaves the field out or blank gets a format error (see model.check_reasons).
 # BashModel has a single tool, so it gets the wording without the comparison (reason_prompt_single).
 model:
-  reason_prompt: 'One sentence on why you chose this tool for this step, then one sentence per other tool you have on why you did not choose it. Do not describe what the step does. Format: "<chosen tool>: why. <other tool>: why not."'
+  reason_prompt: 'One sentence on why you chose this tool for this step, then one sentence per other tool you have on why you did not choose it. Do not describe what the step does. Format: "<chosen tool>: <reason>. <other tool>: <reason against>."'
   reason_prompt_single: One sentence on why you chose to use this tool for this step. Do not describe what the step does.
   model_kwargs:
     num_retries: 15
@@ -37,7 +39,7 @@ agent:
 
     Use your tools to inspect the repository and implement the fix. Every call runs in a fresh subshell, so directory changes and environment variables do not persist between calls.
 
-    Every tool has a why_this_tool field. Fill it with one sentence on why you chose that tool for the step and, for each other tool you have, one sentence on why you did not choose it. Do not describe what the step does, the command already says that. Format: "<chosen tool>: why. <other tool>: why not."
+    Every tool has a why_this_tool field. Fill it with one sentence on why you chose that tool for the step and, for each other tool you have, one sentence on why you did not choose it. Do not describe what the step does, the command already says that. Format: "<chosen tool>: <reason>. <other tool>: <reason against>."
 
     When you are done, run `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` as the only bash command in that call. You cannot continue after it.
 

@@ -1,6 +1,10 @@
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 import yaml
+from minisweagent.exceptions import FormatError
 
 from minisweagent.models.utils.actions_toolcall import BASH_TOOL
 
@@ -50,6 +54,32 @@ def test_reason_prompt():
     # the module constants are untouched
     assert "why_this_tool" not in BASH_TOOL["function"]["parameters"]["properties"]
     assert "why_this_tool" not in SEARCH_TOOL["function"]["parameters"]["properties"]
+
+
+def response(*calls):
+    """A litellm-shaped response with one tool call per (name, args) pair."""
+    tool_calls = [
+        SimpleNamespace(id=f"c{i}", function=SimpleNamespace(name=name, arguments=json.dumps(args)))
+        for i, (name, args) in enumerate(calls)
+    ]
+    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(tool_calls=tool_calls), finish_reason="stop")])
+
+
+def test_missing_reason_is_a_format_error():
+    kw = dict(model_name="x", reason_prompt="Why?", format_error_template="bad: {{error}}")
+    good = {"why_this_tool": "bash: fits.", "command": "ls"}
+    for model in (BashModel(**kw), ToolsModel(**kw)):
+        assert model._parse_actions(response(("bash", good)))[0]["command"] == "ls"
+        for args in ({"command": "ls"}, {"why_this_tool": " ", "command": "ls"}):
+            with pytest.raises(FormatError) as e:
+                model._parse_actions(response(("bash", good), ("bash", args)))
+            assert e.value.messages[0]["content"] == "bad: Missing 'why_this_tool' argument in bash tool call."
+    tools = ToolsModel(**kw)
+    with pytest.raises(FormatError) as e:
+        tools._parse_actions(response(("search", {"pattern": "x"})))
+    assert "in search tool call" in e.value.messages[0]["content"]
+    # without the prompt the field is not required
+    assert BashModel(model_name="x")._parse_actions(response(("bash", {"command": "ls"})))[0]["command"] == "ls"
 
 
 def test_minimal_yamls_share_the_prompt():

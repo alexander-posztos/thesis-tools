@@ -28,5 +28,5 @@ Use `bash.yaml` and `BashModel` for the baseline.
 
 `minimal-directive.yaml` is the same file plus `tool_directive`, a sentence that is put in front of the search tool description.
 
-`minimal-reason.yaml` is the same file plus `reason_prompt` (and `reason_prompt_single` for a surface with one tool) and one paragraph in the instance template. When set, every tool (bash in `BashModel`, bash and search in `ToolsModel`) gets a required `why_this_tool` string as its first parameter, described by that sentence. The model states why it picked the tool, and why not the others, before it writes the arguments. The field stays in the trajectory with the tool call arguments and is never passed to the container.
+`minimal-reason.yaml` is the same file plus `reason_prompt` (and `reason_prompt_single` for a surface with one tool) and one paragraph in the instance template. When set, every tool (bash in `BashModel`, bash and search in `ToolsModel`) gets a required `why_this_tool` string as its first parameter, described by that sentence. The model states why it picked the tool, and why not the others, before it writes the arguments. A call that leaves the field out or blank gets a format error and the model retries. The field stays in the trajectory with the tool call arguments and is never passed to the container.
 
