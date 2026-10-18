@@ -7,8 +7,9 @@ able to edit the tool description without having to change the code. We can edit
 but to edit search.py we would have to commit and push every time, since Pier installs the package from GitHub.
 
 reason_prompt (both classes) adds a required `reason` string as the first parameter of every tool, so the model
-explains why it chose the tool before it writes the arguments. The reason is stored along with the tool call
-arguments in the trajectory for later analysis.
+explains why it chose the tool before it writes the arguments. It asks for a comparison with the other tools, so
+a surface with a single tool uses reason_prompt_single instead (no other tool to compare with). The reason is stored
+along with the tool call arguments in the trajectory for later analysis.
 To not pollute or change the agent performance, we drop the reason string before it reaches the agent
 
 Pier selects one with --ak model_class=thesis_tools.model.<class>. Both abort the trial on a context overflow.
@@ -28,6 +29,8 @@ from thesis_tools.search import SEARCH_TOOL
 class BashModelConfig(LitellmModelConfig):
     reason_prompt: str = ""
     """Description of a required `reason` parameter put first in every tool's schema. Empty means no parameter."""
+    reason_prompt_single: str = ""
+    """Used instead of reason_prompt when the surface has only one tool. Empty falls back to reason_prompt."""
 
 
 def add_reason(tool, prompt):
@@ -54,7 +57,9 @@ class BashModel(LitellmModel):
 
     def __init__(self, *, config_class=BashModelConfig, **kwargs):
         super().__init__(config_class=config_class, **kwargs)
-        self.tools = tuple(add_reason(tool, self.config.reason_prompt) for tool in self._tools())
+        tools = self._tools()
+        prompt = (self.config.reason_prompt_single if len(tools) == 1 else "") or self.config.reason_prompt
+        self.tools = tuple(add_reason(tool, prompt) for tool in tools)
 
     def _tools(self):
         """The tool surface of this condition, before the reason parameter is added. Subclasses override."""

@@ -42,6 +42,11 @@ def test_reason_prompt():
         assert params["required"][0] == "reason"
     bash = BashModel(model_name="x", reason_prompt="Why?").tools[0]["function"]["parameters"]
     assert bash["required"] == ["reason", "command"]
+    # a single-tool surface asks the single-tool question, a multi-tool surface the comparison
+    kw = dict(model_name="x", reason_prompt="Over others?", reason_prompt_single="Alone?")
+    assert BashModel(**kw).tools[0]["function"]["parameters"]["properties"]["reason"]["description"] == "Alone?"
+    for tool in ToolsModel(**kw).tools:
+        assert tool["function"]["parameters"]["properties"]["reason"]["description"] == "Over others?"
     # the module constants are untouched
     assert "reason" not in BASH_TOOL["function"]["parameters"]["properties"]
     assert "reason" not in SEARCH_TOOL["function"]["parameters"]["properties"]

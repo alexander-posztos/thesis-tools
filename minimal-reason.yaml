@@ -6,9 +6,14 @@
 # why: stated reasons are the raw material for the tool-choice categorisation, but asking for an explanation can
 # itself change the choice (Fox, Ericsson & Best 2011). Run the same tasks with minimal.yaml and this file first,
 # and compare search-tool share and resolve rate, before the parameter goes into every arm.
-# wording is deliberately neutral: it names no tool and gives no preference, unlike tool_directive.
+#
+# wording: the first pilot (18 Oct 2026, "One sentence on why you chose this tool for this step.") only produced
+# step labels like "Find ResolveContext definition", not one of 3,057 reasons compared tools. The question now
+# asks for the comparison explicitly but still names no tool. BashModel has a single tool, so it gets the
+# wording without the comparison (reason_prompt_single).
 model:
-  reason_prompt: One sentence on why you chose this tool for this step.
+  reason_prompt: Explain in one sentence why you chose this tool over the other available tools for this step.
+  reason_prompt_single: Explain in one sentence why you chose to use this tool for this step.
   model_kwargs:
     num_retries: 15
     retry_strategy: exponential_backoff_retry
