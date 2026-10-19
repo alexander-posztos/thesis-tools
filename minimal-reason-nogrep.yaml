@@ -8,8 +8,8 @@
 # a drop means the tool is worse than grep, and the reasons then say why.
 model:
   block_grep: true
-  reason_prompt: 'One sentence on why you chose this tool for this step, then one sentence per other tool you have on why you did not choose it. Do not describe what the step does. Format: "<chosen tool>: <reason>. <other tool>: <reason against>."'
-  reason_prompt_single: One sentence on why you chose to use this tool for this step. Do not describe what the step does.
+  reason_prompt: One sentence on why you chose to use this tool for this step. Do not describe what the step does.
+  reason_against_prompt: One sentence on why you did not choose the {tool} tool for this step.
   model_kwargs:
     num_retries: 15
     retry_strategy: exponential_backoff_retry
@@ -33,7 +33,7 @@ agent:
 
     grep and rg are not available as commands in bash in this run, only as a filter after a pipe. Use the search tool to find text in files.
 
-    Every tool has a why_this_tool field. Fill it with one sentence on why you chose that tool for the step and, for each other tool you have, one sentence on why you did not choose it. Do not describe what the step does, the command already says that. Format: "<chosen tool>: <reason>. <other tool>: <reason against>."
+    Every tool has a why_this_tool field and, for each other tool you have, a why_not_<tool> field. Fill why_this_tool with one sentence on why you chose that tool for the step and each why_not_<tool> field with one sentence on why you did not choose that tool. Do not describe what the step does, the command already says that.
 
     When you are done, run `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` as the only bash command in that call. You cannot continue after it.
 

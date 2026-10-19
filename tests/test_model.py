@@ -47,11 +47,14 @@ def test_reason_prompt():
         assert params["required"][0] == "why_this_tool"
     bash = BashModel(model_name="x", reason_prompt="Why?").tools[0]["function"]["parameters"]
     assert bash["required"] == ["why_this_tool", "command"]
-    # a single-tool surface asks the single-tool question, a multi-tool surface the comparison
-    kw = dict(model_name="x", reason_prompt="Over others?", reason_prompt_single="Alone?")
-    assert BashModel(**kw).tools[0]["function"]["parameters"]["properties"]["why_this_tool"]["description"] == "Alone?"
-    for tool in ToolsModel(**kw).tools:
-        assert tool["function"]["parameters"]["properties"]["why_this_tool"]["description"] == "Over others?"
+    # with reason_against_prompt every tool gets one why_not_<other> field after why_this_tool, a single tool none
+    kw = dict(model_name="x", reason_prompt="Why?", reason_against_prompt="Why not {tool}?")
+    assert list(BashModel(**kw).tools[0]["function"]["parameters"]["properties"]) == ["why_this_tool", "command"]
+    bash, search = (t["function"]["parameters"] for t in ToolsModel(**kw).tools)
+    assert bash["required"][:3] == ["why_this_tool", "why_not_search", "command"]
+    assert bash["properties"]["why_not_search"]["description"] == "Why not search?"
+    assert list(search["properties"])[:2] == ["why_this_tool", "why_not_bash"]
+    assert search["required"][:2] == ["why_this_tool", "why_not_bash"]
     # the module constants are untouched
     assert "why_this_tool" not in BASH_TOOL["function"]["parameters"]["properties"]
     assert "why_this_tool" not in SEARCH_TOOL["function"]["parameters"]["properties"]
@@ -68,7 +71,7 @@ def response(*calls):
 
 def test_missing_reason_is_a_format_error():
     kw = dict(model_name="x", reason_prompt="Why?", format_error_template="bad: {{error}}")
-    good = {"why_this_tool": "bash: fits.", "command": "ls"}
+    good = {"why_this_tool": "fits.", "command": "ls"}
     for model in (BashModel(**kw), ToolsModel(**kw)):
         assert model._parse_actions(response(("bash", good)))[0]["command"] == "ls"
         for args in ({"command": "ls"}, {"why_this_tool": " ", "command": "ls"}):
@@ -79,6 +82,14 @@ def test_missing_reason_is_a_format_error():
     with pytest.raises(FormatError) as e:
         tools._parse_actions(response(("search", {"pattern": "x"})))
     assert "in search tool call" in e.value.messages[0]["content"]
+    # the why_not_<other> fields are required too, and only the ones of the called tool
+    tools = ToolsModel(reason_against_prompt="Why not {tool}?", **kw)
+    with pytest.raises(FormatError) as e:
+        tools._parse_actions(response(("bash", good)))
+    assert e.value.messages[0]["content"] == "bad: Missing 'why_not_search' argument in bash tool call."
+    assert tools._parse_actions(response(("bash", good | {"why_not_search": "no."})))[0]["command"] == "ls"
+    with pytest.raises(FormatError):
+        tools._parse_actions(response(("search", {"why_this_tool": "a.", "why_not_search": "b.", "pattern": "x"})))
     # without the prompt the field is not required
     assert BashModel(model_name="x")._parse_actions(response(("bash", {"command": "ls"})))[0]["command"] == "ls"
 
@@ -112,7 +123,8 @@ def test_minimal_yamls_share_the_prompt():
             lines = other["agent"]["instance_template"].splitlines()
             extra = [l for l in lines if "why_this_tool" in l or "grep" in l]
             assert len(extra) == (1 if key == "reason_prompt" else 2)
-            assert other["model"]["reason_prompt"] == yaml.safe_load((ROOT / "minimal-reason.yaml").read_text())["model"]["reason_prompt"]
+            reason = yaml.safe_load((ROOT / "minimal-reason.yaml").read_text())["model"]
+            assert all(other["model"][k] == reason[k] for k in ("reason_prompt", "reason_against_prompt"))
             kept = re.sub(r"\n{3,}", "\n\n", "\n".join(l for l in lines if l not in extra)) + "\n"
             assert kept == base["agent"]["instance_template"]
             assert {k: v for k, v in other["agent"].items() if k != "instance_template"} == {

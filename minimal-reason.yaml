@@ -1,7 +1,8 @@
-# config for the reactivity pilot: minimal.yaml plus model.reason_prompt, which puts a required `why_this_tool`
-# parameter first in every tool (bash in BashModel, bash and search in ToolsModel), and one paragraph in the
-# instance_template that says what goes into it. Everything else must stay byte-identical to minimal.yaml
-# (tests/test_model.py checks that), so the field and that paragraph are the only difference to the arm without it.
+# config for the reactivity pilot: minimal.yaml plus model.reason_prompt and reason_against_prompt, which put a
+# required `why_this_tool` and one `why_not_<tool>` per other tool first in every tool (bash in BashModel, bash and
+# search in ToolsModel), and one paragraph in the instance_template that says what goes into them. Everything else
+# must stay byte-identical to minimal.yaml (tests/test_model.py checks that), so the fields and that paragraph are
+# the only difference to the arm without them.
 #
 # why: stated reasons are the raw material for the tool-choice categorisation, but asking for an explanation can
 # itself change the choice (Fox, Ericsson & Best 2011). Run the same tasks with minimal.yaml and this file first,
@@ -11,13 +12,14 @@
 # sentence why you chose this tool over the other available tools for this step.", field named `reason`) only
 # produced step labels like "Find ResolveContext definition"; not one of 3,000+ reasons compared tools. A parameter
 # description alone is too weak, so the field is now named why_this_tool, the description asks for one sentence
-# per tool (chosen and not chosen), and the instance_template repeats the instruction. Still names no tool.
-# The third pilot copied the first skeleton ("search: why not.") verbatim, hence the <reason> placeholders. A call
-# that leaves the field out or blank gets a format error (see model.check_reasons).
-# BashModel has a single tool, so it gets the wording without the comparison (reason_prompt_single).
+# per tool (chosen and not chosen), and the instance_template repeats the instruction. A call that leaves a field
+# out or blank gets a format error (see model.check_reasons).
+# 19 Oct 2026: the reason against each other tool moved from a "<chosen tool>: <reason>. <other tool>: <reason
+# against>." skeleton in why_this_tool into its own why_not_<tool> field (reason_against_prompt), because GLM 5.3
+# swapped the two labels in 73 of 547 coded calls. BashModel has a single tool, so it gets why_this_tool only.
 model:
-  reason_prompt: 'One sentence on why you chose this tool for this step, then one sentence per other tool you have on why you did not choose it. Do not describe what the step does. Format: "<chosen tool>: <reason>. <other tool>: <reason against>."'
-  reason_prompt_single: One sentence on why you chose to use this tool for this step. Do not describe what the step does.
+  reason_prompt: One sentence on why you chose to use this tool for this step. Do not describe what the step does.
+  reason_against_prompt: One sentence on why you did not choose the {tool} tool for this step.
   model_kwargs:
     num_retries: 15
     retry_strategy: exponential_backoff_retry
@@ -39,7 +41,7 @@ agent:
 
     Use your tools to inspect the repository and implement the fix. Every call runs in a fresh subshell, so directory changes and environment variables do not persist between calls.
 
-    Every tool has a why_this_tool field. Fill it with one sentence on why you chose that tool for the step and, for each other tool you have, one sentence on why you did not choose it. Do not describe what the step does, the command already says that. Format: "<chosen tool>: <reason>. <other tool>: <reason against>."
+    Every tool has a why_this_tool field and, for each other tool you have, a why_not_<tool> field. Fill why_this_tool with one sentence on why you chose that tool for the step and each why_not_<tool> field with one sentence on why you did not choose that tool. Do not describe what the step does, the command already says that.
 
     When you are done, run `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` as the only bash command in that call. You cannot continue after it.
 

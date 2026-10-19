@@ -7,12 +7,15 @@ able to edit the tool description without having to change the code. We can edit
 but to edit search.py we would have to commit and push every time, since Pier installs the package from GitHub.
 
 reason_prompt (both classes) adds a required `why_this_tool` string as the first parameter of every tool, so the
-model explains why it chose the tool before it writes the arguments. It asks for a comparison with the other tools,
-so a surface with a single tool uses reason_prompt_single instead (no other tool to compare with). The field is
-stored along with the tool call arguments in the trajectory for later analysis. It was called `reason` until
-18 Oct 2026; with that name the models wrote step labels ("Find X definition") whatever the description said.
-A call without the field gets a format error (GLM 5.3 left it out of most search calls although the schema
-marks it required). The reason string never reaches the agent, so it cannot change the agent's behaviour.
+model explains why it chose the tool before it writes the arguments. reason_against_prompt adds one required
+`why_not_<tool>` string per other tool right after it (none on a single-tool surface). The fields are stored along
+with the tool call arguments in the trajectory for later analysis. Until 19 Oct 2026 a single field asked for
+"<chosen tool>: <reason>. <other tool>: <reason against>.", and GLM 5.3 swapped the labels in 73 of 547 coded calls
+(a bash grep explained under "search:"), in streaks within a trial; with the tool names in the field names the
+model cannot swap them. The field was called `reason` until 18 Oct 2026; with that name the models wrote step
+labels ("Find X definition") whatever the description said. A call without a field gets a format error (GLM 5.3
+left it out of most search calls although the schema marks it required). The reason strings never reach the
+agent, so they cannot change the agent's behaviour.
 
 block_grep (ToolsModel only) is the leave-one-out arm: a bash command that runs grep or rg as a command gets a
 format error that points to the search tool, so the search tool is the only way to search file contents. grep as
@@ -39,47 +42,63 @@ from thesis_tools.search import SEARCH_TOOL
 class BashModelConfig(LitellmModelConfig):
     reason_prompt: str = ""
     """Description of a required `why_this_tool` parameter put first in every tool's schema. Empty means no parameter."""
-    reason_prompt_single: str = ""
-    """Used instead of reason_prompt when the surface has only one tool. Empty falls back to reason_prompt."""
+    reason_against_prompt: str = ""
+    """Description of a required `why_not_<tool>` parameter per other tool, after `why_this_tool`. `{tool}` is
+    replaced by the other tool's name. Only used together with reason_prompt."""
 
 
 REASON_FIELD = "why_this_tool"
 
 
-def add_reason(tool, prompt):
-    """Returns a copy of a tool schema with REASON_FIELD as its first, required parameter. Properties keep their
-    order in the JSON schema, and models fill the arguments in that order, so the reason comes before the action.
+def reason_fields(names, prompt, against):
+    """Maps each tool name to its reason parameters (field name -> description): REASON_FIELD, then why_not_<other>
+    per other tool if `against` is set. Empty dicts without a prompt."""
+    fields = {}
+    for name in names:
+        fields[name] = {REASON_FIELD: prompt.strip()} if prompt else {}
+        if prompt and against:
+            fields[name] |= {f"why_not_{o}": against.strip().replace("{tool}", o) for o in names if o != name}
+    return fields
+
+
+def add_reasons(tool, fields):
+    """Returns a copy of a tool schema with `fields` as its first, required parameters. Properties keep their order
+    in the JSON schema, and models fill the arguments in that order, so the reasons come before the action.
     The original dict is untouched (BASH_TOOL and SEARCH_TOOL are module constants)."""
-    if not prompt:
+    if not fields:
         return tool
     tool = copy.deepcopy(tool)
     params = tool["function"]["parameters"]
-    params["properties"] = {REASON_FIELD: {"type": "string", "description": prompt.strip()}} | params["properties"]
-    params["required"] = [REASON_FIELD] + [k for k in params.get("required", []) if k != REASON_FIELD]
+    params["properties"] = {k: {"type": "string", "description": v} for k, v in fields.items()} | params["properties"]
+    params["required"] = list(fields) + [k for k in params.get("required", []) if k not in fields]
     return tool
 
 
-def check_reasons(tool_calls, format_error_template, finish_reason):
+def check_reasons(tool_calls, fields, format_error_template, finish_reason):
     """Raises mini-swe-agent's FormatError (same template and message shape as parse_toolcall_actions) for the first
-    tool call whose REASON_FIELD is missing or blank. Unparseable arguments are left to the per-tool validation."""
+    tool call that leaves one of its reason fields (`fields` from reason_fields) missing or blank. Unparseable
+    arguments and unknown tool names are left to the per-tool validation."""
     for tool_call in tool_calls:
         try:
             args = json.loads(tool_call.function.arguments)
         except Exception:
             continue
-        if isinstance(args, dict) and not str(args.get(REASON_FIELD, "")).strip():
-            raise FormatError(
-                {
-                    "role": "user",
-                    "content": Template(format_error_template, undefined=StrictUndefined).render(
-                        actions=[],
-                        error=f"Missing '{REASON_FIELD}' argument in {tool_call.function.name} tool call.",
-                        has_tool_calls=True,
-                        finish_reason=finish_reason,
-                    ),
-                    "extra": {"interrupt_type": "FormatError"},
-                }
-            )
+        if not isinstance(args, dict):
+            continue
+        for field in fields.get(tool_call.function.name, {}):
+            if not str(args.get(field, "")).strip():
+                raise FormatError(
+                    {
+                        "role": "user",
+                        "content": Template(format_error_template, undefined=StrictUndefined).render(
+                            actions=[],
+                            error=f"Missing '{field}' argument in {tool_call.function.name} tool call.",
+                            has_tool_calls=True,
+                            finish_reason=finish_reason,
+                        ),
+                        "extra": {"interrupt_type": "FormatError"},
+                    }
+                )
 
 
 class BashModel(LitellmModel):
@@ -94,21 +113,21 @@ class BashModel(LitellmModel):
     def __init__(self, *, config_class=BashModelConfig, **kwargs):
         super().__init__(config_class=config_class, **kwargs)
         tools = self._tools()
-        prompt = (self.config.reason_prompt_single if len(tools) == 1 else "") or self.config.reason_prompt
-        self.tools = tuple(add_reason(tool, prompt) for tool in tools)
-        self.reason_required = bool(prompt)
+        names = [tool["function"]["name"] for tool in tools]
+        self.reason_fields = reason_fields(names, self.config.reason_prompt, self.config.reason_against_prompt)
+        self.tools = tuple(add_reasons(tool, self.reason_fields[name]) for tool, name in zip(tools, names))
 
     def _tools(self):
         """The tool surface of this condition, before the reason parameter is added. Subclasses override."""
         return [BASH_TOOL]
 
     def _parse_actions(self, response):
-        if self.reason_required:
-            check_reasons(
-                response.choices[0].message.tool_calls or [],
-                self.config.format_error_template,
-                response.choices[0].finish_reason,
-            )
+        check_reasons(
+            response.choices[0].message.tool_calls or [],
+            self.reason_fields,
+            self.config.format_error_template,
+            response.choices[0].finish_reason,
+        )
         return super()._parse_actions(response)
 
     def _query(self, messages, **kwargs):
@@ -170,8 +189,7 @@ class ToolsModel(BashModel):
         tool_calls = response.choices[0].message.tool_calls or []
         if not tool_calls:
             return super()._parse_actions(response)  # raises mini-swe-agent's "no tool calls" FormatError
-        if self.reason_required:
-            check_reasons(tool_calls, self.config.format_error_template, response.choices[0].finish_reason)
+        check_reasons(tool_calls, self.reason_fields, self.config.format_error_template, response.choices[0].finish_reason)
         actions = []
         for tool_call in tool_calls:
             if tool_call.function.name == "search":
