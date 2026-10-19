@@ -30,3 +30,5 @@ Use `bash.yaml` and `BashModel` for the baseline.
 
 `minimal-reason.yaml` is the same file plus `reason_prompt` (and `reason_prompt_single` for a surface with one tool) and one paragraph in the instance template. When set, every tool (bash in `BashModel`, bash and search in `ToolsModel`) gets a required `why_this_tool` string as its first parameter, described by that sentence. The model states why it picked the tool, and why not the others, before it writes the arguments. A call that leaves the field out or blank gets a format error and the model retries. The field stays in the trajectory with the tool call arguments and is never passed to the container.
 
+`minimal-reason-nogrep.yaml` is `minimal-reason.yaml` plus `block_grep` (ToolsModel only) and one sentence in the instance template. Bash commands that run grep or rg as a command get a format error that points to the search tool, so the search tool is the only way to search file contents; grep as a filter after a pipe (`ps aux | grep x`) stays allowed. This is the leave-one-out arm.
+

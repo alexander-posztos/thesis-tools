@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,7 +9,7 @@ from minisweagent.exceptions import FormatError
 
 from minisweagent.models.utils.actions_toolcall import BASH_TOOL
 
-from thesis_tools.model import BashModel, ToolsModel
+from thesis_tools.model import BashModel, ToolsModel, runs_grep
 from thesis_tools.search import SEARCH_TOOL
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -82,15 +83,37 @@ def test_missing_reason_is_a_format_error():
     assert BashModel(model_name="x")._parse_actions(response(("bash", {"command": "ls"})))[0]["command"] == "ls"
 
 
+def test_runs_grep():
+    blocked = ["grep -rn foo src", "cd /x && grep -n foo a.py | head", "rg foo", "git grep foo", "find . | xargs grep foo",
+               "ls || grep foo", "sleep 5; grep -c BUILD /tmp/log", "egrep foo a"]
+    allowed = ["ps aux | grep -c rustc", "git log --grep=foo", "cat a | grep foo | grep -v bar", "./rg foo", "my_grep x",
+               "python3 -c 'import re; re.search(1,2)'"]
+    assert [c for c in blocked if not runs_grep(c)] == []
+    assert [c for c in allowed if runs_grep(c)] == []
+
+
+def test_block_grep_is_a_format_error():
+    kw = dict(model_name="x", block_grep=True, format_error_template="bad: {{error}}")
+    model = ToolsModel(**kw)
+    assert model._parse_actions(response(("bash", {"command": "ps aux | grep x"})))[0]["command"] == "ps aux | grep x"
+    assert "thesis_tools.search" in model._parse_actions(response(("search", {"pattern": "grep"})))[0]["command"]
+    with pytest.raises(FormatError) as e:
+        model._parse_actions(response(("bash", {"command": "ls"}), ("bash", {"command": "grep -rn x ."})))
+    assert e.value.messages[0]["content"].startswith("bad: grep and rg are not available")
+    assert ToolsModel(model_name="x")._parse_actions(response(("bash", {"command": "grep -rn x ."})))[0]["command"]
+
+
 def test_minimal_yamls_share_the_prompt():
     base = yaml.safe_load((ROOT / "minimal.yaml").read_text())
-    for name, key in [("minimal-directive.yaml", "tool_directive"), ("minimal-reason.yaml", "reason_prompt")]:
+    for name, key in [("minimal-directive.yaml", "tool_directive"), ("minimal-reason.yaml", "reason_prompt"),
+                      ("minimal-reason-nogrep.yaml", "block_grep")]:
         other = yaml.safe_load((ROOT / name).read_text())
-        if key == "reason_prompt":  # the reason arm adds exactly one paragraph about the field, nothing else
+        if key != "tool_directive":  # the reason arm adds exactly one paragraph about the field, the nogrep arm one more
             lines = other["agent"]["instance_template"].splitlines()
-            extra = [l for l in lines if "why_this_tool" in l]
-            assert len(extra) == 1
-            kept = "\n".join(l for l in lines if l not in extra).replace("\n\n\n", "\n\n") + "\n"
+            extra = [l for l in lines if "why_this_tool" in l or "grep" in l]
+            assert len(extra) == (1 if key == "reason_prompt" else 2)
+            assert other["model"]["reason_prompt"] == yaml.safe_load((ROOT / "minimal-reason.yaml").read_text())["model"]["reason_prompt"]
+            kept = re.sub(r"\n{3,}", "\n\n", "\n".join(l for l in lines if l not in extra)) + "\n"
             assert kept == base["agent"]["instance_template"]
             assert {k: v for k, v in other["agent"].items() if k != "instance_template"} == {
                 k: v for k, v in base["agent"].items() if k != "instance_template"}
