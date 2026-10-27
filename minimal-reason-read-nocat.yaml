@@ -1,0 +1,44 @@
+# leave-one-out arm for the read tool: minimal-reason-read.yaml plus model.block_read, so cat, head, nl and sed -n
+# are rejected as commands in bash (allowed as a filter after a pipe; cat that writes and sed that edits stay
+# allowed) and the read tool is the only way to read file contents. One sentence in the instance_template says so
+# up front; a blocked command also gets a format error with the same text and the model retries. Everything else
+# is byte-identical to minimal-reason-read.yaml (tests/test_model.py checks that).
+#
+# why: same test as minimal-reason-nogrep.yaml for the search tool. Taking the bash readers away shows whether the
+# read tool is usable at all: same pass rate means habit, a drop means the tool is worse than cat, and the reasons
+# then say why.
+model:
+  tools: [read]
+  block_read: true
+  reason_prompt: One sentence on why you chose to use this tool for this step. Do not describe what the step does.
+  reason_against_prompt: One sentence on why you did not choose the {tool} tool for this step.
+  model_kwargs:
+    num_retries: 15
+    retry_strategy: exponential_backoff_retry
+  format_error_template: |
+    {% if finish_reason is defined and (finish_reason == "length" or (finish_reason == "tool_calls" and not has_tool_calls)) -%}
+    Your previous response reached the output token limit (finish_reason={{ finish_reason }}) before you produced a tool call, so it was cut off. Respond more concisely and finish with a tool call.
+    {%- else -%}
+    Tool call error:
+
+    <error>
+    {{error}}
+    </error>
+
+    Every response must contain at least one tool call. To finish, run `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` as the only bash command in that call.
+    {%- endif %}
+agent:
+  instance_template: |
+    Please solve this issue: {{task}}
+
+    Use your tools to inspect the repository and implement the fix. Every call runs in a fresh subshell, so directory changes and environment variables do not persist between calls.
+
+    Every tool has a why_this_tool field and, for each other tool you have, a why_not_<tool> field. Fill why_this_tool with one sentence on why you chose that tool for the step and each why_not_<tool> field with one sentence on why you did not choose that tool. Do not describe what the step does, the command already says that.
+
+    cat, head, nl and sed -n are not available as commands in bash in this run, only as a filter after a pipe. Use the read tool to read files.
+
+    When you are done, run `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` as the only bash command in that call. You cannot continue after it.
+
+    <system_information>
+    {{system}} {{release}} {{version}} {{machine}}
+    </system_information>
