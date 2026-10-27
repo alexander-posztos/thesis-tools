@@ -9,7 +9,8 @@ from minisweagent.exceptions import FormatError
 
 from minisweagent.models.utils.actions_toolcall import BASH_TOOL
 
-from thesis_tools.model import BashModel, ToolsModel, runs_grep
+from thesis_tools.model import BashModel, ToolsModel, runs_grep, runs_read
+from thesis_tools.read import READ_TOOL
 from thesis_tools.search import SEARCH_TOOL
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -21,6 +22,8 @@ def test_tool_surface():
         "bash",
         "search",
     ]
+    assert ToolsModel(model_name="x", tools=["read"]).tools == (BASH_TOOL, READ_TOOL)
+    assert ToolsModel(model_name="x", tools=["search", "read"]).tools == (BASH_TOOL, SEARCH_TOOL, READ_TOOL)
 
 
 def test_tool_directive():
@@ -96,9 +99,9 @@ def test_missing_reason_is_a_format_error():
 
 def test_runs_grep():
     blocked = ["grep -rn foo src", "cd /x && grep -n foo a.py | head", "rg foo", "git grep foo", "find . | xargs grep foo",
-               "ls || grep foo", "sleep 5; grep -c BUILD /tmp/log", "egrep foo a"]
+               "ls || grep foo", "sleep 5; grep -c BUILD /tmp/log", "egrep foo a", "cat > p.py <<'EOF'\nx = 1\nEOF\ngrep x p.py"]
     allowed = ["ps aux | grep -c rustc", "git log --grep=foo", "cat a | grep foo | grep -v bar", "./rg foo", "my_grep x",
-               "python3 -c 'import re; re.search(1,2)'"]
+               "python3 -c 'import re; re.search(1,2)'", "cat > s.sh <<'EOF'\ngrep -rn foo .\nEOF", "python3 - <<EOF\n  grep\nEOF"]
     assert [c for c in blocked if not runs_grep(c)] == []
     assert [c for c in allowed if runs_grep(c)] == []
 
@@ -114,15 +117,40 @@ def test_block_grep_is_a_format_error():
     assert ToolsModel(model_name="x")._parse_actions(response(("bash", {"command": "grep -rn x ."})))[0]["command"]
 
 
+def test_runs_read():
+    blocked = ["cat a.py", "cd src && cat -n a.py", "head -20 a.py", "head -n 5 a.py | grep x", "nl a.py",
+               "sed -n '10,20p' a.py", "sed -ne 10p a.py", "sed -En '/x/p' a.py", "sed --quiet 1p a", "ls; cat a",
+               "cat a 2>&1", "cat > p.py <<'EOF'\nx = 1\nEOF\npython3 p.py; cat /tmp/out.log"]
+    allowed = ["ls | head -5", "git log | tail -3", "tail -30 a.py", "cat <<'EOF' > a.py\nx\nEOF", "cat > a.py", "cat a > b",
+               "sed -i 's/a/b/' a.py", "sed -n -i 's/a/b/' a.py", "sed 's/a/b/' a.py", "./cat x", "my_cat x",
+               "echo category", "git commit -m 'more tests'", "python3 - <<'PY'\ns = open('a').read()\nhead = s[:5]\nPY"]
+    assert [c for c in blocked if not runs_read(c)] == []
+    assert [c for c in allowed if runs_read(c)] == []
+
+
+def test_block_read_is_a_format_error():
+    kw = dict(model_name="x", tools=["read"], block_read=True, format_error_template="bad: {{error}}")
+    model = ToolsModel(**kw)
+    assert "thesis_tools.read" in model._parse_actions(response(("read", {"path": "cat"})))[0]["command"]
+    assert model._parse_actions(response(("bash", {"command": "grep -rn x ."})))[0]["command"]  # only block_read is on
+    with pytest.raises(FormatError) as e:
+        model._parse_actions(response(("bash", {"command": "cat a.py"})))
+    assert e.value.messages[0]["content"].startswith("bad: cat, head, nl and sed -n are not available")
+    # a search call on a read-only surface is an unknown tool to mini, not a dispatch
+    with pytest.raises(FormatError):
+        model._parse_actions(response(("search", {"pattern": "x"})))
+
+
 def test_minimal_yamls_share_the_prompt():
     base = yaml.safe_load((ROOT / "minimal.yaml").read_text())
     for name, key in [("minimal-directive.yaml", "tool_directive"), ("minimal-reason.yaml", "reason_prompt"),
-                      ("minimal-reason-nogrep.yaml", "block_grep")]:
+                      ("minimal-reason-nogrep.yaml", "block_grep"), ("minimal-reason-read.yaml", "tools"),
+                      ("minimal-reason-read-nocat.yaml", "block_read")]:
         other = yaml.safe_load((ROOT / name).read_text())
-        if key != "tool_directive":  # the reason arm adds exactly one paragraph about the field, the nogrep arm one more
+        if key != "tool_directive":  # the reason arms add exactly one paragraph about the field, the blocked arms one more
             lines = other["agent"]["instance_template"].splitlines()
-            extra = [l for l in lines if "why_this_tool" in l or "grep" in l]
-            assert len(extra) == (1 if key == "reason_prompt" else 2)
+            extra = [l for l in lines if "why_this_tool" in l or "not available as commands" in l]
+            assert len(extra) == (2 if key.startswith("block_") else 1)
             reason = yaml.safe_load((ROOT / "minimal-reason.yaml").read_text())["model"]
             assert all(other["model"][k] == reason[k] for k in ("reason_prompt", "reason_against_prompt"))
             kept = re.sub(r"\n{3,}", "\n\n", "\n".join(l for l in lines if l not in extra)) + "\n"
@@ -133,3 +161,5 @@ def test_minimal_yamls_share_the_prompt():
             assert other["agent"] == base["agent"]
         assert other["model"]["format_error_template"] == base["model"]["format_error_template"]
         assert other["model"][key]
+    for name in ("minimal-reason-read.yaml", "minimal-reason-read-nocat.yaml"):
+        assert yaml.safe_load((ROOT / name).read_text())["model"]["tools"] == ["read"]

@@ -6,10 +6,13 @@ Named tools for [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) 2.
 
 ```
 thesis_tools/search.py   the search tool and its CLI (python -m thesis_tools.search '<json args>')
+thesis_tools/read.py     the read tool and its CLI (python -m thesis_tools.read '<json args>')
+thesis_tools/args.py     argument checking shared by the tool CLIs
 thesis_tools/model.py    BashModel and ToolsModel
 bash.yaml, tools.yaml    mini-swe-agent config, default prompt plus a one-line search-tool mention
 minimal*.yaml            shared minimal prompt, the directive variant steers via the tool description,
-                         the reason variant asks for a stated reason in every tool call
+                         the reason variants ask for a stated reason in every tool call, the nogrep and
+                         nocat variants block the bash path of the named tool
 tests/                   pytest
 ```
 
@@ -30,5 +33,17 @@ Use `bash.yaml` and `BashModel` for the baseline.
 
 `minimal-reason.yaml` is the same file plus `reason_prompt` (and `reason_prompt_single` for a surface with one tool) and one paragraph in the instance template. When set, every tool (bash in `BashModel`, bash and search in `ToolsModel`) gets a required `why_this_tool` string as its first parameter, described by that sentence. The model states why it picked the tool, and why not the others, before it writes the arguments. A call that leaves the field out or blank gets a format error and the model retries. The field stays in the trajectory with the tool call arguments and is never passed to the container.
 
-`minimal-reason-nogrep.yaml` is `minimal-reason.yaml` plus `block_grep` (ToolsModel only) and one sentence in the instance template. Bash commands that run grep or rg as a command get a format error that points to the search tool, so the search tool is the only way to search file contents; grep as a filter after a pipe (`ps aux | grep x`) stays allowed. This is the leave-one-out arm.
+`minimal-reason-nogrep.yaml` is `minimal-reason.yaml` plus `block_grep` (ToolsModel only) and one sentence in the instance template. Bash commands that run grep or rg as a command get a format error that points to the search tool, so the search tool is the only way to search file contents; grep as a filter after a pipe (`ps aux | grep x`) stays allowed, and heredoc bodies are not inspected. This is the leave-one-out arm.
+
+`minimal-reason-read.yaml` is `minimal-reason.yaml` with `tools: [read]`, so the surface is bash plus the read tool instead of bash plus search. `tools` lists the named tools next to bash (`search`, `read`, or both, in that order); it defaults to `[search]`, so the older configs are unchanged.
+
+`minimal-reason-read-nocat.yaml` is `minimal-reason-read.yaml` plus `block_read` and one sentence in the instance template. Bash commands that run cat, head, nl or sed -n as a command get a format error that points to the read tool. Allowed: the same programs as a filter after a pipe, `cat` that writes (heredoc or redirect), `sed` without `-n` or with `-i`, and `tail` (which polls logs in the bash-only trajectories and has no read-tool equivalent).
+
+## Tools
+
+Both tools run in the task container as a shell command built from the tool call's JSON arguments, so observations and trajectories stay as in mini-swe-agent. Bad arguments are reported as the tool result in pi's message format.
+
+`search` is a port of pi's grep tool on ripgrep: pattern, optional path, glob, ignore_case, literal, context, limit. Output is `path:line: text`, capped at the match limit, 50KB and 500 characters per line.
+
+`read` is a port of pi's read tool for text files: path, optional 1-indexed offset and limit. Every output line is prefixed with its line number (`12: text`, unlike pi). Output is capped at 2000 lines or 50KB, whichever comes first, never cutting a line, with a notice that names the next offset.
 

@@ -11,6 +11,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from thesis_tools.args import validate as validate_args
+
 DEFAULT_LIMIT = 100
 DEFAULT_MAX_BYTES = 50 * 1024
 MAX_LINE_LENGTH = 500
@@ -175,27 +177,8 @@ def search(pattern, path=None, glob=None, ignoreCase=False, literal=False, conte
 
 
 def validate(raw_args):
-    """Parses the JSON arguments, checks them against SEARCH_TOOL's schema and returns the kwargs for
-    search(). Bad arguments become the tool result, same message format as pi. No type conversion."""
-    try:
-        args = json.loads(raw_args)
-    except ValueError as e:
-        raise SearchError(f"Error parsing tool call arguments: {e}.") from e
-    if not isinstance(args, dict):
-        raise SearchError("Tool call arguments must be a JSON object.")
-    props = SEARCH_TOOL["function"]["parameters"]["properties"]
-    types = {"string": str, "boolean": bool, "number": (int, float)}
-    errors = [] if "pattern" in args else ["  - /pattern: Expected required property"]
-    for key, value in args.items():
-        if key in props and not isinstance(value, types[props[key]["type"]]):
-            errors.append(f"  - /{key}: Expected {props[key]['type']}")
-    if errors:
-        raise SearchError(
-            'Validation failed for tool "search":\n' + "\n".join(errors)
-            + f"\n\nReceived arguments:\n{json.dumps(args, indent=2)}"
-        )
-    # unknown keys are ignored, like in pi. this also drops the `why_this_tool` and `why_not_bash` keys that the reason prompts add
-    return {key: value for key, value in args.items() if key in props}
+    """Checks the JSON arguments against SEARCH_TOOL's schema, see args.validate."""
+    return validate_args(raw_args, SEARCH_TOOL, SearchError)
 
 
 def main():
