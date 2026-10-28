@@ -9,7 +9,9 @@ from minisweagent.exceptions import FormatError
 
 from minisweagent.models.utils.actions_toolcall import BASH_TOOL
 
-from thesis_tools.model import BashModel, ToolsModel, runs_grep, runs_read
+import litellm
+
+from thesis_tools.model import BashModel, ToolsModel, rate_limit_wait, runs_grep, runs_read
 from thesis_tools.read import READ_TOOL
 from thesis_tools.search import SEARCH_TOOL
 
@@ -145,9 +147,9 @@ def test_minimal_yamls_share_the_prompt():
     base = yaml.safe_load((ROOT / "minimal.yaml").read_text())
     for name, key in [("minimal-directive.yaml", "tool_directive"), ("minimal-reason.yaml", "reason_prompt"),
                       ("minimal-reason-nogrep.yaml", "block_grep"), ("minimal-reason-read.yaml", "tools"),
-                      ("minimal-reason-read-nocat.yaml", "block_read")]:
+                      ("minimal-reason-read-nocat.yaml", "block_read"), ("minimal-search-read.yaml", "tools")]:
         other = yaml.safe_load((ROOT / name).read_text())
-        if key != "tool_directive":  # the reason arms add exactly one paragraph about the field, the blocked arms one more
+        if name not in ("minimal-directive.yaml", "minimal-search-read.yaml"):  # the reason arms add exactly one paragraph about the field, the blocked arms one more
             lines = other["agent"]["instance_template"].splitlines()
             extra = [l for l in lines if "why_this_tool" in l or "not available as commands" in l]
             assert len(extra) == (2 if key.startswith("block_") else 1)
@@ -163,3 +165,53 @@ def test_minimal_yamls_share_the_prompt():
         assert other["model"][key]
     for name in ("minimal-reason-read.yaml", "minimal-reason-read-nocat.yaml"):
         assert yaml.safe_load((ROOT / name).read_text())["model"]["tools"] == ["read"]
+    search_read = yaml.safe_load((ROOT / "minimal-search-read.yaml").read_text())["model"]
+    assert search_read["tools"] == ["search", "read"]
+    assert not any(k in search_read for k in ("reason_prompt", "tool_directive", "block_grep", "block_read"))
+
+
+def rate_limit(message="Rate limit exceeded. Request limit (375/hour) (Retry after 591s).", headers=None):
+    return litellm.exceptions.RateLimitError(message, llm_provider="openai", model="x", headers=headers)
+
+
+def test_rate_limit_wait():
+    assert rate_limit_wait(rate_limit()) == 591  # the message text
+    assert rate_limit_wait(rate_limit(headers={"Retry-After": "30"})) == 30  # the header wins when present
+    assert rate_limit_wait(rate_limit(headers={"retry-after": "1.5"})) == 1.5
+    assert rate_limit_wait(rate_limit("Rate limit exceeded.")) == 60  # neither: the default
+
+
+def test_query_sleeps_out_the_rate_limit(monkeypatch):
+    calls, sleeps = [], []
+    monkeypatch.setattr("thesis_tools.model.time.sleep", sleeps.append)
+    monkeypatch.setattr("thesis_tools.model.time.monotonic", lambda: 1000.0)
+    def completion(**kw):
+        calls.append(kw)
+        if len(calls) < 3:
+            raise rate_limit(f"Request limit (375/hour) (Retry after {len(calls)}0s).")
+        return "response"
+    monkeypatch.setattr("thesis_tools.model.litellm.completion", completion)
+    assert BashModel(model_name="x")._query([]) == "response"
+    assert sleeps == [15, 25]  # Retry-After plus 5 s of slack, once per 429
+    assert len(calls) == 3 and calls[0]["tools"] == (BASH_TOOL,)
+    # the total wait is capped, then the error ends the trial as before
+    calls.clear(), sleeps.clear()
+    with pytest.raises(litellm.exceptions.RateLimitError):
+        BashModel(model_name="x", max_rate_limit_wait=20)._query([])
+    assert sleeps == [15]
+
+
+def test_query_paces_requests(monkeypatch):
+    now, sleeps = [1000.0], []
+    monkeypatch.setattr("thesis_tools.model.time.monotonic", lambda: now[0])
+    monkeypatch.setattr("thesis_tools.model.time.sleep", lambda s: (sleeps.append(s), now.__setitem__(0, now[0] + s)))
+    monkeypatch.setattr("thesis_tools.model.litellm.completion", lambda **kw: "response")
+    model = BashModel(model_name="x", min_request_interval=19.2)
+    model._query([])  # the first call never waits
+    now[0] += 4  # the model answered and the command ran for 4 s
+    model._query([])
+    assert sleeps == [pytest.approx(15.2)]  # 19.2 s from the start of the previous call
+    now[0] += 30
+    model._query([])
+    assert len(sleeps) == 1  # already past the interval, no wait
+    assert BashModel(model_name="x").config.min_request_interval == 0  # the older configs are unpaced

@@ -37,6 +37,10 @@ Use `bash.yaml` and `BashModel` for the baseline.
 
 `minimal-reason-read.yaml` is `minimal-reason.yaml` with `tools: [read]`, so the surface is bash plus the read tool instead of bash plus search. `tools` lists the named tools next to bash (`search`, `read`, or both, in that order); it defaults to `[search]`, so the older configs are unchanged.
 
+`minimal-search-read.yaml` is `minimal.yaml` with `tools: [search, read]`, the free-choice arm with both named tools and nothing else (no reason fields, directive or blocking).
+
+Two optional keys on both model classes deal with provider rate limits, for example an hourly request quota that answers 429 with a Retry-After of up to an hour. `min_request_interval` is the minimum number of seconds between the starts of two model calls in a trial; with n parallel trials and a quota of C requests per hour, n * 3600 / C keeps the run under the quota. A 429 that survives litellm's own retries (`num_retries` in `model_kwargs`, backoff capped at 10 s) is slept out for the Retry-After time (header, else a "Retry after Ns" in the message) and retried, up to `max_rate_limit_wait` seconds per trial (default 7200), instead of ending the trial. Both are off by default and not needed for a self-served model or a provider without quotas.
+
 `minimal-reason-read-nocat.yaml` is `minimal-reason-read.yaml` plus `block_read` and one sentence in the instance template. Bash commands that run cat, head, nl or sed -n as a command get a format error that points to the read tool. Allowed: the same programs as a filter after a pipe, `cat` that writes (heredoc or redirect), `sed` without `-n` or with `-i`, and `tail` (which polls logs in the bash-only trajectories and has no read-tool equivalent).
 
 ## Tools

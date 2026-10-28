@@ -33,6 +33,7 @@ import json
 import re
 import shlex
 import sys
+import time
 
 import litellm
 from jinja2 import StrictUndefined, Template
@@ -51,6 +52,13 @@ class BashModelConfig(LitellmModelConfig):
     reason_against_prompt: str = ""
     """Description of a required `why_not_<tool>` parameter per other tool, after `why_this_tool`. `{tool}` is
     replaced by the other tool's name. Only used together with reason_prompt."""
+    min_request_interval: float = 0
+    """Seconds a trial waits at least between the starts of two model calls. Trials run in separate containers and
+    cannot share a rate limiter, so each one paces itself: with n parallel trials and a quota of C requests per hour,
+    n * 3600 / C keeps the whole run under the quota. 0 means no pacing (the default, fine without a quota)."""
+    max_rate_limit_wait: float = 7200
+    """Total seconds a trial may sleep on Retry-After waits (see rate_limit_wait) before the RateLimitError is
+    raised and ends the trial."""
 
 
 REASON_FIELD = "why_this_tool"
@@ -78,6 +86,23 @@ def add_reasons(tool, fields):
     params["properties"] = {k: {"type": "string", "description": v} for k, v in fields.items()} | params["properties"]
     params["required"] = list(fields) + [k for k in params.get("required", []) if k not in fields]
     return tool
+
+
+RETRY_AFTER = re.compile(r"Retry after (\d+)s")
+
+
+def rate_limit_wait(error, default=60):
+    """Seconds to wait after a 429 from litellm's RateLimitError: the Retry-After header if present, else a
+    "(Retry after Ns)" in the message, else `default`. Providers with hourly or daily quotas answer with waits of up to
+    an hour; litellm's own backoff caps every sleep at 10 s and gives up long before that."""
+    headers = getattr(error, "headers", None) or getattr(getattr(error, "response", None), "headers", None) or {}
+    value = headers.get("retry-after") or headers.get("Retry-After")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        pass
+    match = RETRY_AFTER.search(str(error))
+    return float(match.group(1)) if match else default
 
 
 def format_error(template, error, finish_reason):
@@ -114,13 +139,18 @@ class BashModel(LitellmModel):
     """Baseline. A copy of mini-swe-agent's LitellmModel with two changes.
 
     1. tools=[BASH_TOOL] is not hardcoded, we send self.tools instead, so ToolsModel can add tools.
-    2. the except block immediately stops the trial on a context overflow. Aqueduct sends it as a plain
+    2. the except block immediately stops the trial on a context overflow. Some providers send it as a plain
        BadRequestError, which mini retries until the rate limit or the timeout kills the trial.
        Re-raising it as ContextWindowExceededError makes mini abort right away.
+    3. rate limits (optional, both default off): min_request_interval paces the calls so a run stays under a
+       provider's request quota, and a RateLimitError that survives litellm's own retries (num_retries in
+       model_kwargs) is slept out for the Retry-After time and retried instead of ending the trial. Not needed
+       for a self-served model or a provider without quotas.
     """
 
     def __init__(self, *, config_class=BashModelConfig, **kwargs):
         super().__init__(config_class=config_class, **kwargs)
+        self.last_request = -float("inf")
         tools = self._tools()
         names = [tool["function"]["name"] for tool in tools]
         self.reason_fields = reason_fields(names, self.config.reason_prompt, self.config.reason_against_prompt)
@@ -140,19 +170,32 @@ class BashModel(LitellmModel):
         return super()._parse_actions(response)
 
     def _query(self, messages, **kwargs):
-        try:
-            return litellm.completion(
-                model=self.config.model_name,
-                messages=messages,
-                tools=self.tools,
-                **(self.config.model_kwargs | kwargs),
-            )
-        except litellm.exceptions.BadRequestError as e:
-            if "maximum context length" in str(e) and not isinstance(e, litellm.exceptions.ContextWindowExceededError):
-                raise litellm.exceptions.ContextWindowExceededError(
-                    str(e), self.config.model_name, getattr(e, "llm_provider", "")
-                ) from e
-            raise
+        slept = 0
+        while True:
+            pause = self.last_request + self.config.min_request_interval - time.monotonic()
+            if pause > 0:
+                time.sleep(pause)
+            self.last_request = time.monotonic()
+            try:
+                return litellm.completion(
+                    model=self.config.model_name,
+                    messages=messages,
+                    tools=self.tools,
+                    **(self.config.model_kwargs | kwargs),
+                )
+            except litellm.exceptions.BadRequestError as e:
+                if "maximum context length" in str(e) and not isinstance(e, litellm.exceptions.ContextWindowExceededError):
+                    raise litellm.exceptions.ContextWindowExceededError(
+                        str(e), self.config.model_name, getattr(e, "llm_provider", "")
+                    ) from e
+                raise
+            except litellm.exceptions.RateLimitError as e:
+                wait = rate_limit_wait(e) + 5  # the window reopens at a clock boundary, 5 s of slack for clock skew
+                if slept + wait > self.config.max_rate_limit_wait:
+                    raise
+                print(f"thesis_tools: rate limited, sleeping {wait:.0f}s ({str(e)[:200]})", file=sys.stderr, flush=True)
+                time.sleep(wait)
+                slept += wait
 
 
 class ToolsModelConfig(BashModelConfig):
