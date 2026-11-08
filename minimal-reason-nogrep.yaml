@@ -1,7 +1,7 @@
 # leave-one-out arm: minimal-reason.yaml plus model.block_grep, so grep and rg are rejected as commands in bash
 # (allowed as a filter after a pipe) and the search tool is the only way to search file contents. One sentence in the
-# instance_template says so up front; a blocked command also gets a format error with the same text and the model
-# retries. Everything else is byte-identical to minimal-reason.yaml (tests/test_model.py checks that).
+# instance_template says so up front; a blocked command is not run, the agent just gets the same text back (exit
+# code 127). Everything else is byte-identical to minimal-reason.yaml (tests/test_model.py checks that).
 #
 # why: with grep available the models never pick the search tool (about 2% of calls, 19 Oct 2026), and their stated
 # reasons are post-hoc. Taking grep away shows whether the tool is usable at all: same pass rate means habit,

@@ -18,12 +18,15 @@ labels ("Find X definition") whatever the description said. A call without a fie
 left it out of most search calls although the schema marks it required). The reason strings never reach the
 agent, so they cannot change the agent's behaviour.
 
-block_grep and block_read (ToolsModel only) are the leave-one-out functionallity. When we want to "force" the agent
-to use the named tools instead of bash, we check whether the submitted  bash command runs grep or rg
-(for block_grep) or cat, head, nl or sed -n (for block_read), if this is the case, the command gets a format error that points to the named
-tool, so the named tool is the only way to search or read file contents. The same commands as a filter after a
-pipe stay allowed, since those calls (ps aux | grep, git log | head) are not searches or file reads, and heredoc
-bodies are not looked at (a Python patch script that mentions grep is not a grep call).
+block_grep and block_read (ToolsModel only) are the leave-one-out functionality. When we want to "force" the agent
+to use the named tools instead of bash, we check whether the submitted bash command runs grep or rg
+(for block_grep) or cat, head, nl or sed -n (for block_read). If it does, we don't run the command and just return
+a text telling the agent to use the named tool instead (with exit code 127, like a missing program in bash), so the
+named tool is the only way to search or read file contents. The same commands as a filter after a pipe stay allowed, since those calls
+(ps aux | grep, git log | head) are not searches or file reads, and heredoc bodies are not looked at (a Python patch
+script that mentions grep is not a grep call). Until 8 Nov 2026 we returned a format error instead, but mini-swe-agent
+stops a trial after 3 format errors in a row, so a model that tried cat three times in a row got killed (22 of 111
+MiMo trials in the first no-cat run).
 
 Pier selects one with --ak model_class=thesis_tools.model.<class>. Both abort the trial on a context overflow.
 """
@@ -253,6 +256,12 @@ SED_IN_PLACE = re.compile(r"\s-(?:[a-zA-Z]*i|-in-place)")
 BLOCKED_READ = "cat, head, nl and sed -n are not available as commands in this run, only as a filter after a pipe. Use the read tool to read files."
 
 
+def refusal(message):
+    """We run this instead of a blocked bash command. It just prints the text telling the agent which tool to use and
+    exits with 127, so the agent sees a normal failed command and not a format error."""
+    return f"printf '%s\\n' {shlex.quote(message)}; exit 127"
+
+
 def runs_read(command):
     """True if the bash command reads a file with cat, head, nl or sed -n as a command. Allowed: a filter after a
     single `|`, `cat` that writes (heredoc or redirect), and `sed` without -n or with -i (an edit, not a read)."""
@@ -309,8 +318,8 @@ class ToolsModel(BashModel):
             )
             for action in bash_actions:
                 if self.config.block_grep and runs_grep(action["command"]):
-                    raise format_error(self.config.format_error_template, BLOCKED_GREP, finish_reason)
-                if self.config.block_read and runs_read(action["command"]):
-                    raise format_error(self.config.format_error_template, BLOCKED_READ, finish_reason)
+                    action["command"] = refusal(BLOCKED_GREP)
+                elif self.config.block_read and runs_read(action["command"]):
+                    action["command"] = refusal(BLOCKED_READ)
             actions += bash_actions
         return actions

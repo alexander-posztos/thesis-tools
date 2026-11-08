@@ -1,5 +1,6 @@
 import json
 import re
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,7 +12,7 @@ from minisweagent.models.utils.actions_toolcall import BASH_TOOL
 
 import litellm
 
-from thesis_tools.model import BashModel, ToolsModel, rate_limit_wait, runs_grep, runs_read
+from thesis_tools.model import BLOCKED_GREP, BLOCKED_READ, BashModel, ToolsModel, rate_limit_wait, runs_grep, runs_read
 from thesis_tools.read import READ_TOOL
 from thesis_tools.search import SEARCH_TOOL
 
@@ -108,14 +109,20 @@ def test_runs_grep():
     assert [c for c in allowed if runs_grep(c)] == []
 
 
-def test_block_grep_is_a_format_error():
-    kw = dict(model_name="x", block_grep=True, format_error_template="bad: {{error}}")
-    model = ToolsModel(**kw)
+def refused(action):
+    """Runs a blocked action's command in bash and returns (output, exit code)."""
+    result = subprocess.run(["bash", "-lc", action["command"]], capture_output=True, text=True)
+    return result.stdout, result.returncode
+
+
+def test_block_grep_is_a_failed_command():
+    model = ToolsModel(model_name="x", block_grep=True)
     assert model._parse_actions(response(("bash", {"command": "ps aux | grep x"})))[0]["command"] == "ps aux | grep x"
     assert "thesis_tools.search" in model._parse_actions(response(("search", {"pattern": "grep"})))[0]["command"]
-    with pytest.raises(FormatError) as e:
-        model._parse_actions(response(("bash", {"command": "ls"}), ("bash", {"command": "grep -rn x ."})))
-    assert e.value.messages[0]["content"].startswith("bad: grep and rg are not available")
+    # the blocked call fails like a missing program, the other calls of the response still run
+    ls, grep = model._parse_actions(response(("bash", {"command": "ls"}), ("bash", {"command": "grep -rn x ."})))
+    assert ls["command"] == "ls" and grep["tool_call_id"] == "c1"
+    assert refused(grep) == (BLOCKED_GREP + "\n", 127)
     assert ToolsModel(model_name="x")._parse_actions(response(("bash", {"command": "grep -rn x ."})))[0]["command"]
 
 
@@ -130,14 +137,13 @@ def test_runs_read():
     assert [c for c in allowed if runs_read(c)] == []
 
 
-def test_block_read_is_a_format_error():
+def test_block_read_is_a_failed_command():
     kw = dict(model_name="x", tools=["read"], block_read=True, format_error_template="bad: {{error}}")
     model = ToolsModel(**kw)
     assert "thesis_tools.read" in model._parse_actions(response(("read", {"path": "cat"})))[0]["command"]
     assert model._parse_actions(response(("bash", {"command": "grep -rn x ."})))[0]["command"]  # only block_read is on
-    with pytest.raises(FormatError) as e:
-        model._parse_actions(response(("bash", {"command": "cat a.py"})))
-    assert e.value.messages[0]["content"].startswith("bad: cat, head, nl and sed -n are not available")
+    # the blocked command itself never runs, only the message comes back
+    assert refused(model._parse_actions(response(("bash", {"command": "cat 'a b.py'"})))[0]) == (BLOCKED_READ + "\n", 127)
     # a search call on a read-only surface is an unknown tool to mini, not a dispatch
     with pytest.raises(FormatError):
         model._parse_actions(response(("search", {"pattern": "x"})))

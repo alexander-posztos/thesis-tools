@@ -1,7 +1,7 @@
 # leave-one-out arm for the read tool: minimal-reason-read.yaml plus model.block_read, so cat, head, nl and sed -n
 # are rejected as commands in bash (allowed as a filter after a pipe; cat that writes and sed that edits stay
 # allowed) and the read tool is the only way to read file contents. One sentence in the instance_template says so
-# up front; a blocked command also gets a format error with the same text and the model retries. Everything else
+# up front; a blocked command is not run, the agent just gets the same text back (exit code 127). Everything else
 # is byte-identical to minimal-reason-read.yaml (tests/test_model.py checks that).
 #
 # why: same test as minimal-reason-nogrep.yaml for the search tool. Taking the bash readers away shows whether the
