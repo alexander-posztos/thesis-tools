@@ -207,9 +207,9 @@ class ToolsModelConfig(BashModelConfig):
     """Reject bash commands that run cat, head, nl or sed -n as a command (not as a filter after a pipe)."""
 
 
-# grep, rg, egrep or fgrep as a command word, not part of a longer token (--grep=, ./rg, my_grep) and not
+# grep, rg, egrep or fgrep as a command word, not part of a longer token (--grep=, ./rg, my_grep, grep-exit) and not
 # directly after a single pipe. `git grep`, `xargs grep`, `cd x && grep` and `find | xargs grep` are all blocked.
-GREP_COMMAND = re.compile(r"(?<![\w./-])(?:grep|rg|egrep|fgrep)\b")
+GREP_COMMAND = re.compile(r"(?<![\w./-])(?:grep|rg|egrep|fgrep)(?![\w-])")
 BLOCKED_GREP = "grep and rg are not available as commands in this run, only as a filter after a pipe. Use the search tool to find text in files."
 # a heredoc from its `<<WORD` line to the terminator line; the body is data (patch scripts, file contents), not commands
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2(?=\s|$)", re.S)
@@ -227,23 +227,30 @@ def after_pipe(command, pos):
 
 
 def runs_grep(command):
-    """True if the bash command runs grep/rg as a command. A match right after a single `|` is a filter and allowed."""
+    """True if the bash command runs grep/rg as a command. A match right after a single `|` is a filter and allowed,
+    and a grep word after another one in the same segment is that grep's argument (`ps aux | grep -v grep`)."""
     command = command_words(command)
-    return any(not after_pipe(command, m.start()) for m in GREP_COMMAND.finditer(command))
+    previous = -1
+    for m in GREP_COMMAND.finditer(command):
+        argument = previous >= 0 and not SEGMENT_END.search(command, previous, m.start())
+        if not argument and not after_pipe(command, m.start()):
+            return True
+        previous = m.end()
+    return False
 
 
 # These five regexes are the parts of the rule (runs_read below) that decides whether a bash command reads a file.
-# READ_COMMAND finds cat, head, nl or sed standing as a command, not inside a longer token like ./cat or my_cat
-# (same word rule as GREP_COMMAND). SEGMENT_END marks where that command's arguments stop. WRITE_REDIRECT checks
-# those arguments for a heredoc or a stdout redirect, because `cat > file` and `cat <<EOF` write a file. SED_QUIET
-# checks for -n, because only `sed -n` prints lines and counts as reading. SED_IN_PLACE checks for -i, because
-# `sed -i` edits the file, even with -n.
+# READ_COMMAND finds cat, head, nl or sed standing as a command, not inside a longer token like ./cat, my_cat or
+# git cat-file (same word rule as GREP_COMMAND). SEGMENT_END marks where that command's arguments stop.
+# WRITE_REDIRECT checks those arguments for a heredoc or a stdout redirect, because `cat > file` and `cat <<EOF`
+# write a file. SED_QUIET checks for -n, because only `sed -n` prints lines and counts as reading. SED_IN_PLACE
+# checks for -i, because `sed -i` edits the file, even with -n.
 #
 # tail is left out on purpose. In the bash-only GLM run it polls logs of background jobs in 1,667 of 1,818 calls,
 # and the read tool has no way to read the end of a file (no negative offset). The pagers less and more are left
 # out too, because nobody runs them in a non-interactive shell and "more" is an English word that shows up in
 # commit messages.
-READ_COMMAND = re.compile(r"(?<![\w./-])(?:cat|head|nl|sed)\b")
+READ_COMMAND = re.compile(r"(?<![\w./-])(?:cat|head|nl|sed)(?![\w-])")
 SEGMENT_END = re.compile(r"\|\|?|;|&&|\n")  # the next |, ;, && or line break
 WRITE_REDIRECT = re.compile(r"<<|(?<!\d)>")  # 2> is stderr and does not count
 SED_QUIET = re.compile(r"\s-(?:[a-zA-Z]*n|-quiet|-silent)")  # also bundled, like -En or -ne
@@ -259,10 +266,11 @@ def refusal(message):
 
 def runs_read(command):
     """True if the bash command reads a file with cat, head, nl or sed -n as a command. Allowed: a filter after a
-    single `|`, `cat` that writes (heredoc or redirect), and `sed` without -n or with -i (an edit, not a read)."""
+    single `|`, `cat` that writes (heredoc or redirect), `sed` without -n or with -i (an edit, not a read), and a
+    command right inside $(...) or `...`, whose output becomes data for the outer command (javac -cp "$(cat cp.txt)")."""
     command = command_words(command)
     for m in READ_COMMAND.finditer(command):
-        if after_pipe(command, m.start()):
+        if after_pipe(command, m.start()) or command[: m.start()].rstrip().endswith(("$(", "`")):
             continue
         args = SEGMENT_END.split(command[m.end():], 1)[0]
         if m.group() == "cat" and WRITE_REDIRECT.search(args):

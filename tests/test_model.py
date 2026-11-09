@@ -101,9 +101,11 @@ def test_reason_gap_is_refused():
 
 def test_runs_grep():
     blocked = ["grep -rn foo src", "cd /x && grep -n foo a.py | head", "rg foo", "git grep foo", "find . | xargs grep foo",
-               "ls || grep foo", "sleep 5; grep -c BUILD /tmp/log", "egrep foo a", "cat > p.py <<'EOF'\nx = 1\nEOF\ngrep x p.py"]
+               "ls || grep foo", "sleep 5; grep -c BUILD /tmp/log", "egrep foo a", "cat > p.py <<'EOF'\nx = 1\nEOF\ngrep x p.py",
+               "ps aux | grep -v grep; grep x a"]
     allowed = ["ps aux | grep -c rustc", "git log --grep=foo", "cat a | grep foo | grep -v bar", "./rg foo", "my_grep x",
-               "python3 -c 'import re; re.search(1,2)'", "cat > s.sh <<'EOF'\ngrep -rn foo .\nEOF", "python3 - <<EOF\n  grep\nEOF"]
+               "python3 -c 'import re; re.search(1,2)'", "cat > s.sh <<'EOF'\ngrep -rn foo .\nEOF", "python3 - <<EOF\n  grep\nEOF",
+               "ps aux | grep x | grep -v grep", "ps -ef | grep -v grep | grep -E java", 'tsc 2>&1 | grep -E x; echo "grep-exit: $?"']
     assert [c for c in blocked if not runs_grep(c)] == []
     assert [c for c in allowed if runs_grep(c)] == []
 
@@ -128,10 +130,11 @@ def test_block_grep_is_a_failed_command():
 def test_runs_read():
     blocked = ["cat a.py", "cd src && cat -n a.py", "head -20 a.py", "head -n 5 a.py | grep x", "nl a.py",
                "sed -n '10,20p' a.py", "sed -ne 10p a.py", "sed -En '/x/p' a.py", "sed --quiet 1p a", "ls; cat a",
-               "cat a 2>&1", "cat > p.py <<'EOF'\nx = 1\nEOF\npython3 p.py; cat /tmp/out.log"]
+               "cat a 2>&1", "cat > p.py <<'EOF'\nx = 1\nEOF\npython3 p.py; cat /tmp/out.log", "xargs cat < l"]
     allowed = ["ls | head -5", "git log | tail -3", "tail -30 a.py", "cat <<'EOF' > a.py\nx\nEOF", "cat > a.py", "cat a > b",
                "sed -i 's/a/b/' a.py", "sed -n -i 's/a/b/' a.py", "sed 's/a/b/' a.py", "./cat x", "my_cat x",
-               "echo category", "git commit -m 'more tests'", "python3 - <<'PY'\ns = open('a').read()\nhead = s[:5]\nPY"]
+               "echo category", "git commit -m 'more tests'", "python3 - <<'PY'\ns = open('a').read()\nhead = s[:5]\nPY",
+               'javac -cp "$(cat cp.txt)" A.java', "perl -pe \"$(cat fix.pl)\" a", "git cat-file -p HEAD"]
     assert [c for c in blocked if not runs_read(c)] == []
     assert [c for c in allowed if runs_read(c)] == []
 
