@@ -31,7 +31,7 @@ agent:
 
     Use your tools to inspect the repository and implement the fix. Every call runs in a fresh subshell, so directory changes and environment variables do not persist between calls.
 
-    grep and rg are not available as commands in bash in this run, only as a filter after a pipe. Use the search tool to find text in files.
+    grep and rg are currently not available as commands for you. Use the search tool to find text in files.
 
     Every tool has a why_this_tool field and, for each other tool you have, a why_not_<tool> field. Fill why_this_tool with one sentence on why you chose that tool for the step and each why_not_<tool> field with one sentence on why you did not choose that tool. Do not describe what the step does, the command already says that.
 

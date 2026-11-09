@@ -35,7 +35,7 @@ agent:
 
     Every tool has a why_this_tool field and, for each other tool you have, a why_not_<tool> field. Fill why_this_tool with one sentence on why you chose that tool for the step and each why_not_<tool> field with one sentence on why you did not choose that tool. Do not describe what the step does, the command already says that.
 
-    cat, head, nl and sed -n are not available as commands in bash in this run, only as a filter after a pipe. Use the read tool to read files.
+    cat, head, nl and sed -n are currently not available as commands for you. Use the read tool to read files.
 
     When you are done, run `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` as the only bash command in that call. You cannot continue after it.
 

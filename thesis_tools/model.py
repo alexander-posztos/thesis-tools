@@ -210,7 +210,7 @@ class ToolsModelConfig(BashModelConfig):
 # grep, rg, egrep or fgrep as a command word, not part of a longer token (--grep=, ./rg, my_grep, grep-exit) and not
 # directly after a single pipe. `git grep`, `xargs grep`, `cd x && grep` and `find | xargs grep` are all blocked.
 GREP_COMMAND = re.compile(r"(?<![\w./-])(?:grep|rg|egrep|fgrep)(?![\w-])")
-BLOCKED_GREP = "grep and rg are not available as commands in this run, only as a filter after a pipe. Use the search tool to find text in files."
+BLOCKED_GREP = "Nothing in this command was run. grep and rg are currently not available as commands for you. Use the search tool to find text in files."
 # a heredoc from its `<<WORD` line to the terminator line; the body is data (patch scripts, file contents), not commands
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2(?=\s|$)", re.S)
 
@@ -255,7 +255,7 @@ SEGMENT_END = re.compile(r"\|\|?|;|&&|\n")  # the next |, ;, && or line break
 WRITE_REDIRECT = re.compile(r"<<|(?<!\d)>")  # 2> is stderr and does not count
 SED_QUIET = re.compile(r"\s-(?:[a-zA-Z]*n|-quiet|-silent)")  # also bundled, like -En or -ne
 SED_IN_PLACE = re.compile(r"\s-(?:[a-zA-Z]*i|-in-place)")
-BLOCKED_READ = "cat, head, nl and sed -n are not available as commands in this run, only as a filter after a pipe. Use the read tool to read files."
+BLOCKED_READ = "Nothing in this command was run. cat, head, nl and sed -n are currently not available as commands for you. Use the read tool to read files."
 
 
 def refusal(message):
