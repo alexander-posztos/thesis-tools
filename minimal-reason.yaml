@@ -13,7 +13,8 @@
 # produced step labels like "Find ResolveContext definition"; not one of 3,000+ reasons compared tools. A parameter
 # description alone is too weak, so the field is now named why_this_tool, the description asks for one sentence
 # per tool (chosen and not chosen), and the instance_template repeats the instruction. A call that leaves a field
-# out or blank gets a format error (see model.check_reasons).
+# out, blank or misnamed is refused with exit 127 (see model.refuse_reason_gaps); until 9 Nov 2026 it got a format
+# error, which killed GLM trials after 3 in a row.
 # 19 Oct 2026: the reason against each other tool moved from a "<chosen tool>: <reason>. <other tool>: <reason
 # against>." skeleton in why_this_tool into its own why_not_<tool> field (reason_against_prompt), because GLM 5.3
 # swapped the two labels in 73 of 547 coded calls. BashModel has a single tool, so it gets why_this_tool only.

@@ -1,34 +1,26 @@
-"""Extending the LitellmModel from mini-swe-agent, because the model class sends every LLM request and the
-tools list is part of that request. So this is where the tool surface is set.
+"""The model classes behind the conditions. Pier selects one with --ak model_class=thesis_tools.model.<class>. The
+model class sends every LLM request and the tools list is part of it, so this is where the tool surface is set.
 
-BashModel is the baseline (bash only tool surface).
-ToolsModel is the extension, it has bash, plus the named tools listed in the `tools` yaml key 
-(currently search and/or read). We added tool_directive as a yaml key to easily be able to edit the search tool description without having to change the
-code. We can edit the yaml file directly on the VM, but to edit search.py we would have to commit and push every
-time, since Pier installs the package from GitHub.
+BashModel is the baseline, with bash as the only tool. ToolsModel adds the named tools from the `tools` yaml key
+(search and/or read) next to bash. tool_directive is put in front of the search tool description, so it can change
+in the yaml without a new package version.
 
-reason_prompt (both classes) adds a required `why_this_tool` string as the first parameter of every tool, so the
-model explains why it chose the tool before it writes the arguments. reason_against_prompt adds one required
-`why_not_<tool>` string per other tool right after it (none on a single-tool surface). The fields are stored along
-with the tool call arguments in the trajectory for later analysis. Until 19 Oct 2026 a single field asked for
-"<chosen tool>: <reason>. <other tool>: <reason against>.", and GLM 5.3 swapped the labels in 73 of 547 coded calls
-(a bash grep explained under "search:"), in streaks within a trial; with the tool names in the field names the
-model cannot swap them. The field was called `reason` until 18 Oct 2026; with that name the models wrote step
-labels ("Find X definition") whatever the description said. A call without a field gets a format error (GLM 5.3
-left it out of most search calls although the schema marks it required). The reason strings never reach the
-agent, so they cannot change the agent's behaviour.
+reason_prompt adds a required `why_this_tool` string as the first parameter of every tool, and reason_against_prompt
+one `why_not_<tool>` string per other tool. The tool names are in the field names so the model cannot mix up which
+reason belongs to which tool. The fields are stored with the call in the trajectory and never reach the agent. A call
+with a missing, blank or misnamed field is refused. After MAX_REASON_REFUSALS refused responses in a row such calls
+run anyway, so a model that ignores the fields or gets them wrong does not loop and does not kill the trial.
 
-block_grep and block_read (ToolsModel only) are the leave-one-out functionality. When we want to "force" the agent
-to use the named tools instead of bash, we check whether the submitted bash command runs grep or rg
-(for block_grep) or cat, head, nl or sed -n (for block_read). If it does, we don't run the command and just return
-a text telling the agent to use the named tool instead (with exit code 127, like a missing program in bash), so the
-named tool is the only way to search or read file contents. The same commands as a filter after a pipe stay allowed, since those calls
-(ps aux | grep, git log | head) are not searches or file reads, and heredoc bodies are not looked at (a Python patch
-script that mentions grep is not a grep call). Until 8 Nov 2026 we returned a format error instead, but mini-swe-agent
-stops a trial after 3 format errors in a row, so a model that tried cat three times in a row got killed (22 of 111
-MiMo trials in the first no-cat run).
+block_grep and block_read (ToolsModel only) are the leave-one-out configurations. A bash command that runs grep or rg
+(block_grep), or cat, head, nl or sed -n (block_read), is refused with a nudge to use the named tool instead. The
+same commands as a filter after a pipe stay allowed (ps aux | grep, git log | head), and heredoc bodies are not
+blocked.
 
-Pier selects one with --ak model_class=thesis_tools.model.<class>. Both abort the trial on a context overflow.
+When we refuse a call, we do not run it and return a message saying what to do instead, with exit code 127. We do
+not return a format error, because mini-swe-agent ends a trial after 3 format errors in a row. The other calls in
+the same response still run.
+
+Both classes abort the trial on a context overflow.
 """
 
 import copy
@@ -39,8 +31,6 @@ import sys
 import time
 
 import litellm
-from jinja2 import StrictUndefined, Template
-from minisweagent.exceptions import FormatError
 from minisweagent.models.litellm_model import LitellmModel, LitellmModelConfig
 from minisweagent.models.utils.actions_toolcall import BASH_TOOL, parse_toolcall_actions
 
@@ -91,6 +81,30 @@ def add_reasons(tool, fields):
     return tool
 
 
+# after this many refused responses in a row, calls with missing reasons are no longer refused and just run, so
+# the model cannot loop
+MAX_REASON_REFUSALS = 3
+
+
+def reason_gap(tool_call, fields):
+    """Returns the refusal message if the call is missing a reason field, else None."""
+    try:
+        args = json.loads(tool_call.function.arguments)
+    except Exception:
+        return None
+    if not isinstance(args, dict):
+        return None
+    name = tool_call.function.name
+    missing = [f for f in fields.get(name, {}) if not str(args.get(f, "")).strip()]
+    if not missing:
+        return None
+    text = f"Nothing in this {name} call was run. It is missing {', '.join(missing)}."
+    wrong = [k for k in args if k.startswith("why_") and k not in fields[name]]
+    if wrong:
+        text += f" The {name} tool has no {', '.join(wrong)} argument."
+    return text + " Send the call again with every why_ argument filled in."
+
+
 RETRY_AFTER = re.compile(r"Retry after (\d+)s")
 
 
@@ -106,36 +120,6 @@ def rate_limit_wait(error, default=60):
         pass
     match = RETRY_AFTER.search(str(error))
     return float(match.group(1)) if match else default
-
-
-def format_error(template, error, finish_reason):
-    """mini-swe-agent's FormatError with the same template and message shape as parse_toolcall_actions."""
-    return FormatError(
-        {
-            "role": "user",
-            "content": Template(template, undefined=StrictUndefined).render(
-                actions=[], error=error, has_tool_calls=True, finish_reason=finish_reason
-            ),
-            "extra": {"interrupt_type": "FormatError"},
-        }
-    )
-
-
-def check_reasons(tool_calls, fields, format_error_template, finish_reason):
-    """Raises a FormatError for the first tool call that leaves one of its reason fields (`fields` from
-    reason_fields) missing or blank. Unparseable arguments and unknown tool names are left to the per-tool
-    validation."""
-    for tool_call in tool_calls:
-        try:
-            args = json.loads(tool_call.function.arguments)
-        except Exception:
-            continue
-        if not isinstance(args, dict):
-            continue
-        for field in fields.get(tool_call.function.name, {}):
-            if not str(args.get(field, "")).strip():
-                error = f"Missing '{field}' argument in {tool_call.function.name} tool call."
-                raise format_error(format_error_template, error, finish_reason)
 
 
 class BashModel(LitellmModel):
@@ -158,19 +142,30 @@ class BashModel(LitellmModel):
         names = [tool["function"]["name"] for tool in tools]
         self.reason_fields = reason_fields(names, self.config.reason_prompt, self.config.reason_against_prompt)
         self.tools = tuple(add_reasons(tool, self.reason_fields[name]) for tool, name in zip(tools, names))
+        self.reason_refusals = 0
 
     def _tools(self):
         """The tool surface of this condition, before the reason parameter is added. Subclasses override."""
         return [BASH_TOOL]
 
     def _parse_actions(self, response):
-        check_reasons(
-            response.choices[0].message.tool_calls or [],
-            self.reason_fields,
-            self.config.format_error_template,
-            response.choices[0].finish_reason,
-        )
-        return super()._parse_actions(response)
+        actions = super()._parse_actions(response)
+        return self.refuse_reason_gaps(response.choices[0].message.tool_calls or [], actions)
+
+    def refuse_reason_gaps(self, tool_calls, actions):
+        """Refuses every call that is missing a reason field. A response with all fields filled in resets the
+        count, and after MAX_REASON_REFUSALS refused responses in a row the calls run anyway."""
+        gaps = {tool_call.id: reason_gap(tool_call, self.reason_fields) for tool_call in tool_calls}
+        if not any(gaps.values()):
+            self.reason_refusals = 0
+            return actions
+        if self.reason_refusals >= MAX_REASON_REFUSALS:
+            return actions
+        self.reason_refusals += 1
+        for action in actions:
+            if gaps.get(action["tool_call_id"]):
+                action["command"] = refusal(gaps[action["tool_call_id"]])
+        return actions
 
     def _query(self, messages, **kwargs):
         slept = 0
@@ -257,8 +252,8 @@ BLOCKED_READ = "cat, head, nl and sed -n are not available as commands in this r
 
 
 def refusal(message):
-    """We run this instead of a blocked bash command. It just prints the text telling the agent which tool to use and
-    exits with 127, so the agent sees a normal failed command and not a format error."""
+    """We run this instead of a blocked bash command or a call with a reason gap. It just prints the text telling the
+    agent what to do instead and exits with 127, so the agent sees a normal failed command and not a format error."""
     return f"printf '%s\\n' {shlex.quote(message)}; exit 127"
 
 
@@ -301,16 +296,15 @@ class ToolsModel(BashModel):
         if not tool_calls:
             return super()._parse_actions(response)  # raises mini-swe-agent's "no tool calls" FormatError
         finish_reason = response.choices[0].finish_reason
-        check_reasons(tool_calls, self.reason_fields, self.config.format_error_template, finish_reason)
         actions = []
         for tool_call in tool_calls:
             if tool_call.function.name in self.config.tools:
-                # the arguments go to the tool's module as they are, it checks them and reports problems as the tool result
+                # the module checks the arguments itself and reports problems as its output
                 module = NAMED_TOOLS[tool_call.function.name][1]
                 command = shlex.join([sys.executable, "-m", module, tool_call.function.arguments])
                 actions.append({"command": command, "tool_call_id": tool_call.id})
                 continue
-            # bash (and unknown names) get mini's own validation and error messages
+            # bash and unknown tool names get mini-swe-agent's own checks
             bash_actions = parse_toolcall_actions(
                 [tool_call],
                 format_error_template=self.config.format_error_template,
@@ -322,4 +316,4 @@ class ToolsModel(BashModel):
                 elif self.config.block_read and runs_read(action["command"]):
                     action["command"] = refusal(BLOCKED_READ)
             actions += bash_actions
-        return actions
+        return self.refuse_reason_gaps(tool_calls, actions)

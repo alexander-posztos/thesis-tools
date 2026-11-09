@@ -75,29 +75,28 @@ def response(*calls):
     return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(tool_calls=tool_calls), finish_reason="stop")])
 
 
-def test_missing_reason_is_a_format_error():
-    kw = dict(model_name="x", reason_prompt="Why?", format_error_template="bad: {{error}}")
-    good = {"why_this_tool": "fits.", "command": "ls"}
-    for model in (BashModel(**kw), ToolsModel(**kw)):
-        assert model._parse_actions(response(("bash", good)))[0]["command"] == "ls"
-        for args in ({"command": "ls"}, {"why_this_tool": " ", "command": "ls"}):
-            with pytest.raises(FormatError) as e:
-                model._parse_actions(response(("bash", good), ("bash", args)))
-            assert e.value.messages[0]["content"] == "bad: Missing 'why_this_tool' argument in bash tool call."
-    tools = ToolsModel(**kw)
-    with pytest.raises(FormatError) as e:
-        tools._parse_actions(response(("search", {"pattern": "x"})))
-    assert "in search tool call" in e.value.messages[0]["content"]
-    # the why_not_<other> fields are required too, and only the ones of the called tool
-    tools = ToolsModel(reason_against_prompt="Why not {tool}?", **kw)
-    with pytest.raises(FormatError) as e:
-        tools._parse_actions(response(("bash", good)))
-    assert e.value.messages[0]["content"] == "bad: Missing 'why_not_search' argument in bash tool call."
-    assert tools._parse_actions(response(("bash", good | {"why_not_search": "no."})))[0]["command"] == "ls"
-    with pytest.raises(FormatError):
-        tools._parse_actions(response(("search", {"why_this_tool": "a.", "why_not_search": "b.", "pattern": "x"})))
-    # without the prompt the field is not required
-    assert BashModel(model_name="x")._parse_actions(response(("bash", {"command": "ls"})))[0]["command"] == "ls"
+def test_reason_gap_is_refused():
+    # a missing, blank or misnamed reason field: the call is refused with exit 127, the other calls of the response run
+    kw = dict(model_name="x", reason_prompt="Why?", reason_against_prompt="Why not {tool}?")
+    full = {"why_this_tool": "a.", "why_not_search": "b.", "command": "ls"}
+    for model in (BashModel(model_name="x", reason_prompt="Why?"), ToolsModel(**kw)):
+        for args in ({"command": "ls"}, {"why_this_tool": " ", "why_not_search": "b.", "command": "ls"}):
+            out, code = refused(model._parse_actions(response(("bash", args)))[0])
+            assert code == 127 and "missing why_this_tool" in out
+    model = ToolsModel(**kw)
+    ok, bad = model._parse_actions(response(("bash", full), ("bash", {"why_this_tool": "a.", "why_not_bash": "b.", "command": "ls"})))
+    assert ok["command"] == "ls"
+    assert refused(bad) == ("Nothing in this bash call was run. It is missing why_not_search. The bash tool has no "
+                            "why_not_bash argument. Send the call again with every why_ argument filled in.\n", 127)
+    assert "thesis_tools.search" not in model._parse_actions(response(("search", {"pattern": "x"})))[0]["command"]
+    # after 3 refused responses in a row the gap runs anyway, until a clean response resets the count
+    model = ToolsModel(**kw)
+    gap = response(("bash", {"command": "ls"}))
+    assert [model._parse_actions(gap)[0]["command"] == "ls" for _ in range(5)] == [False, False, False, True, True]
+    assert model._parse_actions(response(("bash", full)))[0]["command"] == "ls"
+    assert model._parse_actions(gap)[0]["command"] != "ls"
+    # without a reason prompt nothing is checked
+    assert ToolsModel(model_name="x")._parse_actions(gap)[0]["command"] == "ls"
 
 
 def test_runs_grep():
